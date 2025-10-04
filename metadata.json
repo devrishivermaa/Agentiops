@@ -1,0 +1,16 @@
+{
+  "file_name": "2510.02125v1.pdf",
+  "file_path": "C:\\Users\\devri\\OneDrive\\Desktop\\Agentiops\\data\\2510.02125v1.pdf",
+  "brief_info": "A research paper on DO AI MODELS PERFORM HUMAN-LIKE ABSTRACTREASONING ACROSS MODALITIES?.",
+  "num_pages": 10000,
+  "file_size_mb": 2.4,
+  "has_ocr": true,
+  "priority": "high",
+  "document_type": "pdf",
+  "processing_requirements": [
+    "entity_extraction",
+    "summary_generation",
+    "keyword_indexing"
+  ],
+  "user_notes": "Focus on extracting key findings and methodologies."
+}
