@@ -1,1 +1,9 @@
-
+fastapi
+uvicorn
+redis
+pymongo
+langchain
+langgraph
+chromadb
+pydantic
+ray
