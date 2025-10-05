@@ -6,3 +6,4 @@ langchain
 langgraph
 chromadb
 pydantic
+ray
