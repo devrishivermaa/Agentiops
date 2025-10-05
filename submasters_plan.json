@@ -1,0 +1,129 @@
+{
+  "num_submasters": 10,
+  "distribution_strategy": "The document will be divided among ten SubMasters to achieve a highly granular focus on extracting key findings and methodologies, as per the user's request. This increased number of submasters allows for more specialized extraction of specific methodological components and distinct categories of findings. SubMaster 1 will focus on the Abstract and Introduction to establish context and problem statement. SubMaster 2 will specifically target the theoretical underpinnings and general approach detailed in the Methodology section. SubMaster 3 will concentrate on the specific algorithms, models, or techniques employed. SubMaster 4 will detail the experimental design and setup. SubMaster 5 will cover data collection and preprocessing procedures. SubMaster 6 will be dedicated to synthesizing the primary quantitative results. SubMaster 7 will focus on qualitative results and observations. SubMaster 8 will delve into the interpretation and discussion of the findings. SubMaster 9 will capture the overarching conclusions and limitations. Finally, SubMaster 10 will extract details on future work and supplementary information from the Appendix.",
+  "submasters": [
+    {
+      "role": "Summarize the Abstract and Introduction to establish the research context and problem statement.",
+      "assigned_sections": [
+        "Abstract",
+        "Introduction"
+      ],
+      "page_range": [
+        1,
+        8
+      ],
+      "estimated_workload": "low",
+      "submaster_id": "SM-516234"
+    },
+    {
+      "role": "Extract the theoretical foundations and general methodological approach from the Methodology section.",
+      "assigned_sections": [
+        "Methodology"
+      ],
+      "page_range": [
+        16,
+        22
+      ],
+      "estimated_workload": "low",
+      "submaster_id": "SM-98E0C8"
+    },
+    {
+      "role": "Detail the specific algorithms, models, or computational techniques used in the research.",
+      "assigned_sections": [
+        "Methodology"
+      ],
+      "page_range": [
+        23,
+        30
+      ],
+      "estimated_workload": "medium",
+      "submaster_id": "SM-DF8C4B"
+    },
+    {
+      "role": "Describe the experimental design, including hypotheses and control groups.",
+      "assigned_sections": [
+        "Experiments"
+      ],
+      "page_range": [
+        36,
+        42
+      ],
+      "estimated_workload": "low",
+      "submaster_id": "SM-511565"
+    },
+    {
+      "role": "Detail the procedures for data collection, sampling, and preprocessing.",
+      "assigned_sections": [
+        "Experiments"
+      ],
+      "page_range": [
+        43,
+        55
+      ],
+      "estimated_workload": "medium",
+      "submaster_id": "SM-932E4F"
+    },
+    {
+      "role": "Identify and summarize the primary quantitative results and statistical findings.",
+      "assigned_sections": [
+        "Results"
+      ],
+      "page_range": [
+        56,
+        63
+      ],
+      "estimated_workload": "medium",
+      "submaster_id": "SM-D830D8"
+    },
+    {
+      "role": "Extract and summarize any qualitative results, observations, or case studies.",
+      "assigned_sections": [
+        "Results"
+      ],
+      "page_range": [
+        64,
+        70
+      ],
+      "estimated_workload": "low",
+      "submaster_id": "SM-51B153"
+    },
+    {
+      "role": "Analyze the interpretation and discussion of the key findings and their significance.",
+      "assigned_sections": [
+        "Discussion"
+      ],
+      "page_range": [
+        71,
+        80
+      ],
+      "estimated_workload": "medium",
+      "submaster_id": "SM-9A18EF"
+    },
+    {
+      "role": "Extract the main conclusions, limitations, and contributions of the study.",
+      "assigned_sections": [
+        "Conclusion"
+      ],
+      "page_range": [
+        86,
+        90
+      ],
+      "estimated_workload": "low",
+      "submaster_id": "SM-F167DE"
+    },
+    {
+      "role": "Capture details on future research directions and any supplementary information from the Appendix.",
+      "assigned_sections": [
+        "Conclusion",
+        "Appendix"
+      ],
+      "page_range": [
+        91,
+        100
+      ],
+      "estimated_workload": "low",
+      "submaster_id": "SM-C40F1B"
+    }
+  ],
+  "status": "approved"
+}

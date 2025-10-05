@@ -1,8 +1,8 @@
 {
   "file_name": "2510.02125v1.pdf",
   "file_path": "C:\\Users\\devri\\OneDrive\\Desktop\\Agentiops\\data\\2510.02125v1.pdf",
-  "brief_info": "A research paper on DO AI MODELS PERFORM HUMAN-LIKE ABSTRACTREASONING ACROSS MODALITIES?.",
-  "num_pages": 10000,
+  "brief_info": "A research paper exploring if AI models perform human-like abstract reasoning across modalities.",
+  "num_pages": 100,
   "file_size_mb": 2.4,
   "has_ocr": true,
   "priority": "high",
@@ -12,5 +12,51 @@
     "summary_generation",
     "keyword_indexing"
   ],
-  "user_notes": "Focus on extracting key findings and methodologies."
+  "user_notes": "Focus on extracting key findings and methodologies.",
+  "estimated_cost_per_agent": 0.02,
+  "max_context_per_agent": 20000,
+  "preferred_model": "gemini-2.5-flash-lite-preview-06-17",
+  "max_parallel_submasters": 4,
+  "complexity_level": "high",
+  "feedback_required": true,
+  "output_format": "structured_json",
+  "expected_completion_time": "short",
+  "sections": {
+    "Abstract": {
+      "page_start": 1,
+      "page_end": 1
+    },
+    "Introduction": {
+      "page_start": 2,
+      "page_end": 8
+    },
+    "Related Work": {
+      "page_start": 9,
+      "page_end": 15
+    },
+    "Methodology": {
+      "page_start": 16,
+      "page_end": 35
+    },
+    "Experiments": {
+      "page_start": 36,
+      "page_end": 55
+    },
+    "Results": {
+      "page_start": 56,
+      "page_end": 70
+    },
+    "Discussion": {
+      "page_start": 71,
+      "page_end": 85
+    },
+    "Conclusion": {
+      "page_start": 86,
+      "page_end": 90
+    },
+    "Appendix": {
+      "page_start": 91,
+      "page_end": 100
+    }
+  }
 }
