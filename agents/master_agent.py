@@ -3,10 +3,12 @@ import os
 import json
 import uuid
 import re
+from typing import Dict, Any
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.schema import HumanMessage
 from utils.logger import get_logger
+from utils.pdf_extractor import PDFExtractor
 
 # ----------------------------- Setup -----------------------------
 load_dotenv()
@@ -61,6 +63,118 @@ class MasterAgent:
 
         return min(base, metadata.get("max_parallel_submasters", 4))
 
+    # ----------------------------- Plan Validation -----------------------------
+    def validate_plan(self, plan: Dict[str, Any], metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate that the generated plan has valid page ranges.
+        
+        Returns:
+            Dict with "valid": bool and "errors": list
+        """
+        num_pages = metadata.get("num_pages", 100)
+        errors = []
+        
+        submasters = plan.get("submasters", [])
+        if not submasters:
+            errors.append("No submasters defined in plan")
+            return {"valid": False, "errors": errors}
+        
+        for idx, sm in enumerate(submasters):
+            sm_id = sm.get("submaster_id", f"SM-{idx}")
+            page_range = sm.get("page_range", [])
+            
+            if not page_range or len(page_range) % 2 != 0:
+                errors.append(f"{sm_id}: Invalid page_range format: {page_range}")
+                continue
+            
+            # Check each (start, end) pair
+            for i in range(0, len(page_range), 2):
+                start = page_range[i]
+                end = page_range[i + 1]
+                
+                if start < 1:
+                    errors.append(f"{sm_id}: Page start {start} < 1")
+                if end > num_pages:
+                    errors.append(f"{sm_id}: Page end {end} > {num_pages} (PDF has {num_pages} pages)")
+                if start > end:
+                    errors.append(f"{sm_id}: Page start {start} > end {end}")
+        
+        if errors:
+            self.logger.warning(f"Plan validation found {len(errors)} errors")
+            return {"valid": False, "errors": errors}
+        
+        self.logger.info("Plan validation passed")
+        return {"valid": True, "errors": []}
+
+    # ----------------------------- PDF Validation & Metadata Correction -----------------------------
+    def validate_and_fix_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate metadata against actual PDF file and fix discrepancies.
+        
+        Returns:
+            Updated metadata with corrections applied
+        """
+        pdf_path = metadata.get("file_path", "")
+        
+        if not pdf_path or not os.path.exists(pdf_path):
+            self.logger.error(f"PDF file not found: {pdf_path}")
+            return metadata
+        
+        try:
+            # Extract actual PDF info
+            extractor = PDFExtractor(pdf_path)
+            actual_pages = extractor.num_pages
+            pdf_metadata = extractor.get_metadata()
+            
+            self.logger.info(f"PDF has {actual_pages} pages (metadata says {metadata.get('num_pages')})")
+            
+            # Fix page count
+            if metadata.get("num_pages") != actual_pages:
+                self.logger.warning(f"Correcting num_pages: {metadata.get('num_pages')} -> {actual_pages}")
+                metadata["num_pages"] = actual_pages
+            
+            # Validate and fix sections
+            sections = metadata.get("sections", {})
+            fixed_sections = {}
+            removed_sections = []
+            
+            for section_name, section_info in sections.items():
+                start = section_info.get("page_start", 1)
+                end = section_info.get("page_end", 1)
+                
+                # Check if section is within valid range
+                if start > actual_pages or end > actual_pages:
+                    self.logger.warning(
+                        f"Section '{section_name}' pages {start}-{end} exceed PDF length ({actual_pages}). "
+                        f"Removing section."
+                    )
+                    removed_sections.append(section_name)
+                    continue
+                
+                # Clamp to valid range
+                if end > actual_pages:
+                    self.logger.warning(f"Clamping section '{section_name}' end page: {end} -> {actual_pages}")
+                    section_info["page_end"] = actual_pages
+                
+                fixed_sections[section_name] = section_info
+            
+            if removed_sections:
+                print(f"\n⚠️  Removed {len(removed_sections)} invalid sections: {', '.join(removed_sections)}")
+            
+            metadata["sections"] = fixed_sections
+            
+            # Add actual PDF metadata
+            metadata["pdf_metadata"] = pdf_metadata
+            metadata["validated_against_pdf"] = True
+            
+            self.logger.info(f"Metadata validated and corrected. {len(fixed_sections)} valid sections.")
+            
+            return metadata
+            
+        except Exception as e:
+            self.logger.error(f"Error validating PDF: {e}")
+            return metadata
+
     # ----------------------------- LLM Metadata Validation -----------------------------
     def validate_metadata_with_llm(self, metadata: dict) -> dict:
         """
@@ -94,6 +208,7 @@ Respond ONLY in JSON format:
     def ask_llm_for_plan(self, user_request: str, metadata: dict):
         """Ask the LLM to generate a structured SubMaster plan based on sections."""
         num_submasters = self.estimate_submasters_needed(metadata)
+        num_pages = metadata.get("num_pages", 100)
         sections = metadata.get("sections", {})
         section_summary = json.dumps(sections, indent=2)
 
@@ -109,12 +224,18 @@ DOCUMENT METADATA (excluding sections):
 DOCUMENT SECTIONS (with page ranges):
 {section_summary}
 
+⚠️ CRITICAL CONSTRAINTS:
+- The PDF has EXACTLY {num_pages} pages. DO NOT assign page ranges beyond page {num_pages}.
+- Every page_range MUST be within [1, {num_pages}].
+- Verify ALL page numbers before responding.
+
 TASK:
 - Divide this document among {num_submasters} SubMasters.
 - Each SubMaster should handle one or more sections logically.
 - Each must have a distinct role (summarization, entity extraction, keyword extraction, etc.).
 - Respect section boundaries; avoid splitting a section unless necessary.
 - Include reasoning under "distribution_strategy".
+- ENSURE all page ranges are valid (start >= 1, end <= {num_pages}).
 
 Respond ONLY in JSON format like this:
 
@@ -139,7 +260,11 @@ Respond ONLY in JSON format like this:
         """Persistent interactive loop — continues until user approves the plan."""
         self.logger.info("[START] Entering feedback loop...")
 
-        # Validate metadata first
+        # STEP 1: Validate and fix metadata against actual PDF
+        print("\n🔍 Validating metadata against actual PDF...")
+        metadata = self.validate_and_fix_metadata(metadata)
+        
+        # STEP 2: Validate metadata with LLM
         validation = self.validate_metadata_with_llm(metadata)
         if validation["status"] == "issues":
             print("\n⚠ Metadata discrepancies detected by LLM:")
@@ -158,6 +283,29 @@ Respond ONLY in JSON format like this:
 
         # Persistent feedback loop
         while True:
+            # Validate plan
+            plan_validation = self.validate_plan(plan, metadata)
+            if not plan_validation["valid"]:
+                print("\n⚠️ Plan validation errors detected:")
+                for error in plan_validation["errors"]:
+                    print(f"   ❌ {error}")
+                print("\n🔄 Regenerating plan...")
+                
+                # Ask LLM to fix the plan
+                fix_prompt = f"""
+The previous plan had validation errors:
+{chr(10).join(f"- {e}" for e in plan_validation["errors"])}
+
+CRITICAL: The PDF has {metadata.get('num_pages')} pages.
+All page ranges MUST be within [1, {metadata.get('num_pages')}].
+
+Generate a corrected plan with valid page ranges.
+"""
+                plan = self.ask_llm_for_plan(goal + "\n\n" + fix_prompt, metadata)
+                for sm in plan.get("submasters", []):
+                    sm["submaster_id"] = f"SM-{uuid.uuid4().hex[:6].upper()}"
+                continue
+            
             print("\n📋 Proposed SubMaster Plan:\n")
             print(json.dumps(plan, indent=2))
 

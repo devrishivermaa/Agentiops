@@ -1,9 +1,9 @@
 {
-  "num_submasters": 4,
-  "distribution_strategy": "The document will be divided among 4 SubMasters, each with a distinct role focusing on extracting key findings and methodologies as per the user's notes. SubMaster 1 will focus on the foundational aspects (Abstract and Introduction) for initial summarization. SubMaster 2 will delve into the core Methodology and Experiments, crucial for understanding how the research was conducted. SubMaster 3 will analyze the Results and Discussion to extract key findings and their implications. SubMaster 4 will be responsible for entity extraction across the entire document, ensuring all relevant entities are captured, and will also handle the Conclusion and Appendix for completeness.",
+  "num_submasters": 3,
+  "distribution_strategy": "The document is divided among three SubMasters to focus on distinct aspects of the research paper. SubMaster 1 will handle the Abstract and Introduction to provide an overall summary and context. SubMaster 2 will focus on the Related Work section to extract key entities and concepts discussed in prior research. SubMaster 3 will be responsible for extracting key findings and methodologies, which are likely to be distributed across the remaining sections (though not explicitly defined in the provided section list, the prompt emphasizes these aspects). Given the limited section information, SubMaster 3 will be assigned a broad role to cover potential findings and methodologies in the unlisted sections, assuming they exist and are crucial for the GOAL.",
   "submasters": [
     {
-      "role": "Summarize Abstract and Introduction to set the context.",
+      "role": "Summarize the Abstract and Introduction to establish the research context and problem statement.",
       "assigned_sections": [
         "Abstract",
         "Introduction"
@@ -13,49 +13,29 @@
         8
       ],
       "estimated_workload": "medium",
-      "submaster_id": "SM-961727"
+      "submaster_id": "SM-20ABA9"
     },
     {
-      "role": "Extract methodologies and experimental setup.",
+      "role": "Extract key entities, concepts, and methodologies from the Related Work section.",
       "assigned_sections": [
-        "Methodology",
-        "Experiments"
-      ],
-      "page_range": [
-        16,
-        55
-      ],
-      "estimated_workload": "high",
-      "submaster_id": "SM-FF93C0"
-    },
-    {
-      "role": "Identify key findings from Results and Discussion.",
-      "assigned_sections": [
-        "Results",
-        "Discussion"
-      ],
-      "page_range": [
-        56,
-        85
-      ],
-      "estimated_workload": "high",
-      "submaster_id": "SM-810958"
-    },
-    {
-      "role": "Extract entities and keywords, and summarize Conclusion/Appendix.",
-      "assigned_sections": [
-        "Related Work",
-        "Conclusion",
-        "Appendix"
+        "Related Work"
       ],
       "page_range": [
         9,
-        15,
-        86,
-        100
+        15
       ],
       "estimated_workload": "medium",
-      "submaster_id": "SM-E862F2"
+      "submaster_id": "SM-D4FF90"
+    },
+    {
+      "role": "Extract key findings and methodologies from the remaining (unlisted) sections of the document.",
+      "assigned_sections": [],
+      "page_range": [
+        16,
+        21
+      ],
+      "estimated_workload": "high",
+      "submaster_id": "SM-20EE13"
     }
   ],
   "status": "approved"

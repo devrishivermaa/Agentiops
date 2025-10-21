@@ -2,7 +2,7 @@
   "file_name": "2510.02125v1.pdf",
   "file_path": "/home/dawgdevv/building_some/agetic_ops/Agentiops/data/2510.02125v1.pdf",
   "brief_info": "A research paper exploring if AI models perform human-like abstract reasoning across modalities.",
-  "num_pages": 100,
+  "num_pages": 21,
   "file_size_mb": 2.4,
   "has_ocr": true,
   "priority": "high",
@@ -33,30 +33,6 @@
     "Related Work": {
       "page_start": 9,
       "page_end": 15
-    },
-    "Methodology": {
-      "page_start": 16,
-      "page_end": 35
-    },
-    "Experiments": {
-      "page_start": 36,
-      "page_end": 55
-    },
-    "Results": {
-      "page_start": 56,
-      "page_end": 70
-    },
-    "Discussion": {
-      "page_start": 71,
-      "page_end": 85
-    },
-    "Conclusion": {
-      "page_start": 86,
-      "page_end": 90
-    },
-    "Appendix": {
-      "page_start": 91,
-      "page_end": 100
     }
   }
 }

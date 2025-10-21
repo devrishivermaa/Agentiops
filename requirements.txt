@@ -8,3 +8,5 @@ chromadb
 pydantic
 ray
 python-dotenv
+pypdf
+langchain-google-genai
