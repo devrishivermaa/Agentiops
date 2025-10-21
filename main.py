@@ -22,6 +22,9 @@ if __name__ == "__main__":
         print("✅ PROCESSING COMPLETE")
         print("=" * 80)
         
+        total_llm_successes = 0
+        total_llm_failures = 0
+        
         for sm_id, info in results.items():
             status = info['status']
             
@@ -29,27 +32,43 @@ if __name__ == "__main__":
                 output = info.get('output', {})
                 total_pages = output.get('total_pages', 0)
                 total_chars = output.get('total_chars', 0)
+                total_entities = output.get('total_entities', 0)
+                total_keywords = output.get('total_keywords', 0)
+                llm_successes = output.get('llm_successes', 0)
+                llm_failures = output.get('llm_failures', 0)
                 role = output.get('role', 'N/A')[:60]
+                
+                total_llm_successes += llm_successes
+                total_llm_failures += llm_failures
                 
                 print(f"\n✅ {sm_id}")
                 print(f"   Role: {role}...")
                 print(f"   Pages: {total_pages} | Characters: {total_chars:,}")
                 
-                # Check if LLM processing happened
-                results_data = output.get('results', [])
-                has_analysis = any(
-                    'summary' in r or 'entities' in r or 'keywords' in r 
-                    for r in results_data
-                )
-                
-                if has_analysis:
-                    print(f"   ✨ LLM Analysis: Yes")
+                if llm_successes > 0:
+                    print(f"   ✨ LLM Analysis: {llm_successes}/{total_pages} pages analyzed")
+                    print(f"   📊 Extracted: {total_entities} entities, {total_keywords} keywords")
+                    
+                    # Show aggregate summary preview
+                    agg_summary = output.get('aggregate_summary', '')
+                    if agg_summary and not agg_summary.startswith("No analysis"):
+                        preview = agg_summary[:150] + "..." if len(agg_summary) > 150 else agg_summary
+                        print(f"   📝 Summary: {preview}")
                 else:
-                    print(f"   ⚠️  LLM Analysis: No (only extracted text)")
+                    print(f"   ⚠️  LLM Analysis: Failed ({llm_failures} errors)")
             else:
                 print(f"\n❌ {sm_id}: {info.get('error', 'Unknown error')}")
         
         print("\n" + "=" * 80)
-        print("💡 TIP: Run 'python3 inspect_results.py' for detailed analysis")
+        print("📊 OVERALL STATISTICS")
+        print("=" * 80)
+        print(f"   Total SubMasters: {len(results)}")
+        print(f"   LLM Analyses: {total_llm_successes} successful, {total_llm_failures} failed")
+        
+        if total_llm_successes > 0:
+            success_rate = (total_llm_successes / (total_llm_successes + total_llm_failures)) * 100
+            print(f"   Success Rate: {success_rate:.1f}%")
+        
+        print("\n💡 TIP: Run 'python3 inspect_results.py' for detailed analysis")
         print("=" * 80)
 
