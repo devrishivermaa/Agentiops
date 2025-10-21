@@ -1,126 +1,61 @@
 {
-  "num_submasters": 10,
-  "distribution_strategy": "The document will be divided among 10 SubMasters to ensure a granular focus on extracting key findings and methodologies, as per user feedback. This approach allows for deeper dives into specific aspects of the research, from foundational concepts to detailed results and their implications. SubMaster 1 will focus on the Abstract for a concise overview. SubMaster 2 will cover the Introduction to establish context. SubMasters 3 and 4 will meticulously detail the Methodology. SubMasters 5, 6, and 7 will concentrate on the Experiments and Results, breaking them down for comprehensive extraction of findings. SubMasters 8 and 9 will synthesize the Discussion to interpret these findings. Finally, SubMaster 10 will consolidate the Conclusion to present the overarching key takeaways and contributions.",
+  "num_submasters": 4,
+  "distribution_strategy": "The document will be divided among 4 SubMasters, each with a distinct role focusing on extracting key findings and methodologies as per the user's notes. SubMaster 1 will focus on the foundational aspects (Abstract and Introduction) for initial summarization. SubMaster 2 will delve into the core Methodology and Experiments, crucial for understanding how the research was conducted. SubMaster 3 will analyze the Results and Discussion to extract key findings and their implications. SubMaster 4 will be responsible for entity extraction across the entire document, ensuring all relevant entities are captured, and will also handle the Conclusion and Appendix for completeness.",
   "submasters": [
     {
-      "role": "Provide a concise summary of the Abstract to capture the core research question and main findings.",
+      "role": "Summarize Abstract and Introduction to set the context.",
       "assigned_sections": [
-        "Abstract"
-      ],
-      "page_range": [
-        1,
-        2
-      ],
-      "estimated_workload": "low",
-      "submaster_id": "SM-C361BC"
-    },
-    {
-      "role": "Summarize the Introduction to establish the research background, problem statement, and objectives.",
-      "assigned_sections": [
+        "Abstract",
         "Introduction"
       ],
       "page_range": [
-        3,
+        1,
         8
       ],
       "estimated_workload": "medium",
-      "submaster_id": "SM-FF883B"
+      "submaster_id": "SM-961727"
     },
     {
-      "role": "Extract detailed information on the overall research design and general methodologies.",
+      "role": "Extract methodologies and experimental setup.",
       "assigned_sections": [
-        "Methodology"
+        "Methodology",
+        "Experiments"
       ],
       "page_range": [
         16,
-        22
-      ],
-      "estimated_workload": "medium",
-      "submaster_id": "SM-BAA044"
-    },
-    {
-      "role": "Extract specific details on experimental setups, materials, and procedures.",
-      "assigned_sections": [
-        "Methodology"
-      ],
-      "page_range": [
-        23,
-        35
+        55
       ],
       "estimated_workload": "high",
-      "submaster_id": "SM-1A3042"
+      "submaster_id": "SM-FF93C0"
     },
     {
-      "role": "Extract key findings and experimental details from the initial part of the Experiments section.",
+      "role": "Identify key findings from Results and Discussion.",
       "assigned_sections": [
-        "Experiments"
-      ],
-      "page_range": [
-        36,
-        48
-      ],
-      "estimated_workload": "high",
-      "submaster_id": "SM-6C56C6"
-    },
-    {
-      "role": "Extract key findings and experimental details from the latter part of the Experiments section.",
-      "assigned_sections": [
-        "Experiments"
-      ],
-      "page_range": [
-        49,
-        60
-      ],
-      "estimated_workload": "high",
-      "submaster_id": "SM-D40CE9"
-    },
-    {
-      "role": "Extract and summarize the primary results presented in the Results section.",
-      "assigned_sections": [
-        "Results"
-      ],
-      "page_range": [
-        61,
-        70
-      ],
-      "estimated_workload": "high",
-      "submaster_id": "SM-AD0D48"
-    },
-    {
-      "role": "Analyze and extract key findings and interpretations from the initial part of the Discussion section.",
-      "assigned_sections": [
+        "Results",
         "Discussion"
       ],
       "page_range": [
-        71,
-        80
+        56,
+        85
       ],
       "estimated_workload": "high",
-      "submaster_id": "SM-D764EF"
+      "submaster_id": "SM-810958"
     },
     {
-      "role": "Analyze and extract key findings and interpretations from the latter part of the Discussion section.",
+      "role": "Extract entities and keywords, and summarize Conclusion/Appendix.",
       "assigned_sections": [
-        "Discussion"
+        "Related Work",
+        "Conclusion",
+        "Appendix"
       ],
       "page_range": [
-        81,
-        90
-      ],
-      "estimated_workload": "high",
-      "submaster_id": "SM-72A092"
-    },
-    {
-      "role": "Synthesize the overarching key findings, implications, and contributions from the Conclusion.",
-      "assigned_sections": [
-        "Conclusion"
-      ],
-      "page_range": [
-        91,
-        95
+        9,
+        15,
+        86,
+        100
       ],
       "estimated_workload": "medium",
-      "submaster_id": "SM-074163"
+      "submaster_id": "SM-E862F2"
     }
   ],
   "status": "approved"

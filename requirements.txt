@@ -7,3 +7,4 @@ langgraph
 chromadb
 pydantic
 ray
+python-dotenv
