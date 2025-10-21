@@ -1,9 +1,9 @@
 {
   "num_submasters": 3,
-  "distribution_strategy": "The document is divided among three SubMasters to focus on distinct aspects of the research paper. SubMaster 1 will handle the Abstract and Introduction to provide an overall summary and context. SubMaster 2 will focus on the Related Work section to identify existing research and methodologies. SubMaster 3 will be responsible for extracting key findings and methodologies from the remaining sections (which are not explicitly provided but are assumed to exist given the paper's nature and the goal of extracting findings). This distribution ensures that each SubMaster has a clear and manageable scope, aligning with the user's request to focus on key findings and methodologies.",
+  "distribution_strategy": "The document is divided among three SubMasters to focus on distinct aspects of the research paper. SubMaster 1 will handle the Abstract and Introduction, providing an overview and context. SubMaster 2 will focus on the Related Work section, identifying key prior research and methodologies. SubMaster 3 will be responsible for extracting key findings and methodologies from the entire document, as per the user's primary request, by synthesizing information from all sections. This distribution ensures that the core objective of extracting key findings and methodologies is met while also covering the foundational sections of the paper.",
   "submasters": [
     {
-      "role": "Summarize the Abstract and Introduction, providing overall context and research questions.",
+      "role": "Summarize Abstract and Introduction to provide context and overview.",
       "assigned_sections": [
         "Abstract",
         "Introduction"
@@ -13,10 +13,10 @@
         8
       ],
       "estimated_workload": "medium",
-      "submaster_id": "SM-62D427"
+      "submaster_id": "SM-41B410"
     },
     {
-      "role": "Extract methodologies and identify key prior work from the Related Work section.",
+      "role": "Extract methodologies and key concepts from Related Work.",
       "assigned_sections": [
         "Related Work"
       ],
@@ -25,17 +25,21 @@
         15
       ],
       "estimated_workload": "medium",
-      "submaster_id": "SM-F15B79"
+      "submaster_id": "SM-21DA5C"
     },
     {
-      "role": "Extract key findings and methodologies from the remaining (unspecified) sections of the paper.",
-      "assigned_sections": [],
+      "role": "Extract key findings and methodologies across the entire document.",
+      "assigned_sections": [
+        "Abstract",
+        "Introduction",
+        "Related Work"
+      ],
       "page_range": [
-        16,
-        21
+        1,
+        15
       ],
       "estimated_workload": "high",
-      "submaster_id": "SM-7C586A"
+      "submaster_id": "SM-3F0DDB"
     }
   ],
   "status": "approved"
