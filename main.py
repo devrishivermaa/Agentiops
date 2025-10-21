@@ -1,5 +1,6 @@
 from agents.master_agent import MasterAgent
 from orchestrator import spawn_submasters_and_run
+from utils.report_generator import generate_analysis_report
 import json
 
 if __name__ == "__main__":
@@ -71,4 +72,30 @@ if __name__ == "__main__":
         
         print("\n💡 TIP: Run 'python3 inspect_results.py' for detailed analysis")
         print("=" * 80)
+        
+        # Step 5: Generate reports
+        print("\n📝 Generating analysis reports...")
+        try:
+            report_files = generate_analysis_report(results, metadata, output_dir="output")
+            
+            print("\n✅ Reports generated successfully!")
+            
+            if 'json' in report_files:
+                print(f"   � JSON Data: {report_files['json']}")
+            
+            if 'pdf' in report_files:
+                print(f"   �📄 PDF Report: {report_files['pdf']}")
+            elif 'pdf_error' in report_files:
+                print(f"   ⚠️  PDF generation failed: {report_files['pdf_error']}")
+                print(f"   💡 JSON report is still available")
+            
+            print("\n💡 View reports: python3 view_reports.py")
+            print("=" * 80)
+            
+        except Exception as e:
+            print(f"\n⚠️  Failed to generate reports: {e}")
+            print("   (Results are still available in memory)")
+            import traceback
+            traceback.print_exc()
+            print("=" * 80)
 

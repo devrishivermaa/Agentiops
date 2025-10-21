@@ -10,3 +10,5 @@ ray
 python-dotenv
 pypdf
 langchain-google-genai
+reportlab
+markdown
