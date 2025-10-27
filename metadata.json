@@ -1,38 +1,50 @@
 {
   "file_name": "2510.02125v1.pdf",
-  "file_path": "/home/dawgdevv/building_some/agetic_ops/Agentiops/data/2510.02125v1.pdf",
+  "file_path": "/Users/adhirajsingh/Adhiraj/Agentiops/data/2510.02125v1.pdf",
   "brief_info": "A research paper exploring if AI models perform human-like abstract reasoning across modalities.",
   "num_pages": 21,
-  "file_size_mb": 2.4,
-  "has_ocr": true,
+  "file_size_mb": 2.38,
+  "has_ocr": false,
   "priority": "high",
-  "document_type": "pdf",
+  "document_type": "research_paper",
   "processing_requirements": [
     "entity_extraction",
     "summary_generation",
     "keyword_indexing"
   ],
-  "user_notes": "Focus on extracting key findings and methodologies.",
+  "user_notes": "Focus on extracting key findings and methodologies from this ConceptARC benchmark paper.",
   "estimated_cost_per_agent": 0.02,
   "max_context_per_agent": 20000,
-  "preferred_model": "gemini-2.5-flash-lite-preview-06-17",
-  "max_parallel_submasters": 4,
+  "preferred_model": "gemini-2.0-flash-exp",
+  "max_parallel_submasters": 2,
+  "num_workers_per_submaster": 3,
   "complexity_level": "high",
   "feedback_required": true,
   "output_format": "structured_json",
-  "expected_completion_time": "short",
+  "expected_completion_time": "medium",
   "sections": {
     "Abstract": {
       "page_start": 1,
-      "page_end": 1
+      "page_end": 1,
+      "description": "Paper abstract and overview"
     },
     "Introduction": {
       "page_start": 2,
-      "page_end": 8
+      "page_end": 8,
+      "description": "Introduction, background, and contributions"
     },
-    "Related Work": {
+    "Related_Work": {
       "page_start": 9,
-      "page_end": 15
+      "page_end": 15,
+      "description": "Literature review and related research"
+    },
+    "Methodology_Results": {
+      "page_start": 16,
+      "page_end": 21,
+      "description": "Methods, experiments, results, and conclusions"
     }
-  }
+  },
+  "created_at": "2025-10-27T17:00:00",
+  "status": "validated",
+  "validated_against_pdf": true
 }

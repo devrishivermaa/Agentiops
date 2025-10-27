@@ -1,12 +1,13 @@
 # utils/llm_helper.py
 """
-LLM Helper with retry logic, rate limiting, and error handling.
-Designed for parallel SubMaster execution with Gemini API.
+LLM Helper with enhanced retry logic and rate limiting.
+Optimized for Gemini API free tier (15 RPM).
 """
 
 import os
 import time
 import json
+import threading
 from typing import Dict, Any, Optional, List
 from functools import wraps
 from dotenv import load_dotenv
@@ -18,37 +19,59 @@ load_dotenv()
 logger = get_logger("LLMHelper")
 
 
-class RateLimiter:
-    """Simple rate limiter to prevent API quota exhaustion."""
+class GlobalRateLimiter:
+    """
+    Global rate limiter shared across all SubMasters.
+    Prevents exceeding Gemini free tier limits (15 RPM).
+    """
     
-    def __init__(self, max_requests_per_minute: int = 60):
+    def __init__(self, max_requests_per_minute: int = 12):  # Leave buffer of 3
         self.max_requests = max_requests_per_minute
         self.request_times: List[float] = []
-        self.lock_acquired = False
+        self.lock = threading.Lock()
+        logger.info(f"GlobalRateLimiter initialized: {max_requests_per_minute} RPM")
     
-    def wait_if_needed(self):
+    def wait_if_needed(self, caller_id: str = "unknown"):
         """Block if rate limit would be exceeded."""
-        now = time.time()
-        
-        # Remove requests older than 1 minute
-        self.request_times = [t for t in self.request_times if now - t < 60]
-        
-        if len(self.request_times) >= self.max_requests:
-            # Wait until oldest request is >1 minute old
-            sleep_time = 60 - (now - self.request_times[0]) + 0.1
-            if sleep_time > 0:
-                logger.warning(f"Rate limit reached. Sleeping for {sleep_time:.2f}s")
-                time.sleep(sleep_time)
-                self.request_times = []
-        
-        self.request_times.append(now)
+        with self.lock:
+            now = time.time()
+            
+            # Remove requests older than 1 minute
+            self.request_times = [t for t in self.request_times if now - t < 60]
+            
+            if len(self.request_times) >= self.max_requests:
+                # Calculate wait time
+                oldest_request = self.request_times[0]
+                wait_time = 60 - (now - oldest_request) + 1  # +1 for safety buffer
+                
+                if wait_time > 0:
+                    logger.warning(
+                        f"[{caller_id}] Global rate limit reached "
+                        f"({len(self.request_times)}/{self.max_requests}). "
+                        f"Sleeping for {wait_time:.1f}s"
+                    )
+                    time.sleep(wait_time)
+                    # Clear old requests after waiting
+                    now = time.time()
+                    self.request_times = [t for t in self.request_times if now - t < 60]
+            
+            # Record this request
+            self.request_times.append(time.time())
+            logger.debug(
+                f"[{caller_id}] Request allowed. "
+                f"Current: {len(self.request_times)}/{self.max_requests}"
+            )
+
+
+# Global rate limiter instance shared across all SubMasters
+_global_rate_limiter = GlobalRateLimiter(max_requests_per_minute=12)
 
 
 class LLMProcessor:
     """
     Wrapper for LLM API calls with:
     - Retry logic with exponential backoff
-    - Rate limiting
+    - Global rate limiting
     - Error handling
     - Response parsing
     """
@@ -57,8 +80,9 @@ class LLMProcessor:
         self,
         model: str = "gemini-2.0-flash-exp",
         temperature: float = 0.3,
-        max_retries: int = 3,
-        rate_limit: int = 60
+        max_retries: int = 5,
+        rate_limit: int = 60,  # DEPRECATED: kept for backward compatibility
+        caller_id: str = "unknown"  # NEW PARAMETER
     ):
         """
         Initialize LLM processor.
@@ -67,7 +91,8 @@ class LLMProcessor:
             model: Gemini model name
             temperature: Sampling temperature (0.0-1.0)
             max_retries: Max retry attempts on failure
-            rate_limit: Max requests per minute
+            rate_limit: DEPRECATED - global rate limiter is used instead
+            caller_id: Identifier for logging (e.g., SubMaster ID or Worker ID)
         """
         api_key = os.getenv("GOOGLE_API_KEY")
         if not api_key:
@@ -76,7 +101,7 @@ class LLMProcessor:
         self.model = model
         self.temperature = temperature
         self.max_retries = max_retries
-        self.rate_limiter = RateLimiter(rate_limit)
+        self.caller_id = caller_id
         
         try:
             self.llm = ChatGoogleGenerativeAI(
@@ -84,14 +109,14 @@ class LLMProcessor:
                 temperature=temperature,
                 google_api_key=api_key
             )
-            logger.info(f"LLM initialized: {model} (temp={temperature})")
+            logger.info(f"[{caller_id}] LLM initialized: {model} (temp={temperature})")
         except Exception as e:
-            logger.error(f"Failed to initialize LLM: {e}")
+            logger.error(f"[{caller_id}] Failed to initialize LLM: {e}")
             raise
     
     def call_with_retry(self, prompt: str, parse_json: bool = False) -> Any:
         """
-        Call LLM with retry logic.
+        Call LLM with retry logic and global rate limiting.
         
         Args:
             prompt: Text prompt to send
@@ -104,8 +129,8 @@ class LLMProcessor:
         
         for attempt in range(self.max_retries):
             try:
-                # Rate limiting
-                self.rate_limiter.wait_if_needed()
+                # Global rate limiting BEFORE API call
+                _global_rate_limiter.wait_if_needed(self.caller_id)
                 
                 # Make API call
                 response = self.llm.invoke([HumanMessage(content=prompt)])
@@ -120,22 +145,35 @@ class LLMProcessor:
                 if parse_json:
                     return self._parse_json(content)
                 
+                logger.debug(f"[{self.caller_id}] LLM call successful (attempt {attempt+1})")
                 return content
                 
             except Exception as e:
                 last_error = e
-                wait_time = (2 ** attempt) + (time.time() % 1)  # Exponential backoff with jitter
+                error_str = str(e)
                 
-                logger.warning(
-                    f"LLM call failed (attempt {attempt + 1}/{self.max_retries}): {e}. "
-                    f"Retrying in {wait_time:.2f}s..."
-                )
-                
-                if attempt < self.max_retries - 1:
+                # Check if it's a quota error
+                if "429" in error_str or "quota" in error_str.lower():
+                    # Exponential backoff with longer waits for quota errors
+                    wait_time = min(60, (2 ** attempt) * 10)  # 10s, 20s, 40s, 60s
+                    logger.warning(
+                        f"[{self.caller_id}] Rate limit hit (attempt {attempt + 1}/{self.max_retries}). "
+                        f"Waiting {wait_time:.1f}s before retry..."
+                    )
                     time.sleep(wait_time)
+                else:
+                    # Standard exponential backoff for other errors
+                    wait_time = (2 ** attempt) + (time.time() % 1)
+                    logger.warning(
+                        f"[{self.caller_id}] LLM call failed (attempt {attempt + 1}/{self.max_retries}): {e}. "
+                        f"Retrying in {wait_time:.2f}s..."
+                    )
+                    
+                    if attempt < self.max_retries - 1:
+                        time.sleep(wait_time)
         
         # All retries failed
-        logger.error(f"LLM call failed after {self.max_retries} attempts: {last_error}")
+        logger.error(f"[{self.caller_id}] LLM call failed after {self.max_retries} attempts: {last_error}")
         raise RuntimeError(f"LLM call failed after {self.max_retries} retries") from last_error
     
     def _extract_content(self, response: Any) -> str:
@@ -170,7 +208,7 @@ class LLMProcessor:
         try:
             return json.loads(text)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON: {e}")
+            logger.error(f"[{self.caller_id}] Failed to parse JSON: {e}")
             logger.debug(f"Problematic text: {text[:500]}")
             raise
 
@@ -190,7 +228,7 @@ def create_analysis_prompt(
         text: Extracted text from PDF page
         page_num: Page number being processed
         section_name: Name of document section (if known)
-        processing_requirements: List of required tasks (e.g., ["entity_extraction"])
+        processing_requirements: List of required tasks
     
     Returns:
         Formatted prompt string
@@ -209,7 +247,7 @@ def create_analysis_prompt(
     
     prompt_parts.append("\n\nAnalyze this page and provide:")
     
-    # Add specific requirements based on processing needs
+    # Add specific requirements
     if "summary_generation" in requirements or "summarization" in role.lower():
         prompt_parts.append("\n1. SUMMARY: A concise 2-3 sentence summary of the key points")
     
@@ -246,7 +284,6 @@ Be concise and factual. Extract actual content from the text.
     return "".join(prompt_parts)
 
 
-# Convenience function for SubMasters
 def analyze_page(
     llm_processor: LLMProcessor,
     role: str,

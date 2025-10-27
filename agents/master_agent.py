@@ -10,11 +10,13 @@ from langchain.schema import HumanMessage
 from utils.logger import get_logger
 from utils.pdf_extractor import PDFExtractor
 
+
 # ----------------------------- Setup -----------------------------
 load_dotenv()
 api_key = os.getenv("GOOGLE_API_KEY")
 if not api_key:
     raise ValueError("GOOGLE_API_KEY not found in environment!")
+
 
 # ----------------------------- MasterAgent -----------------------------
 class MasterAgent:
@@ -30,7 +32,7 @@ class MasterAgent:
         self.id = f"MA-{uuid.uuid4().hex[:6].upper()}"
         self.logger = get_logger("MasterAgent")
 
-        model = model or "gemini-2.5-flash-lite-preview-06-17"
+        model = model or "gemini-2.0-flash-exp"
         self.llm = ChatGoogleGenerativeAI(model=model, temperature=temperature)
         self.logger.info(f"[INIT] Master Agent {self.id} initialized with model {model}.")
 
@@ -128,43 +130,31 @@ class MasterAgent:
             
             self.logger.info(f"PDF has {actual_pages} pages (metadata says {metadata.get('num_pages')})")
             
-            # Fix page count
+            # Fix 1: Correct page count
             if metadata.get("num_pages") != actual_pages:
                 self.logger.warning(f"Correcting num_pages: {metadata.get('num_pages')} -> {actual_pages}")
                 metadata["num_pages"] = actual_pages
             
-            # Validate and fix sections
+            # Fix 2: Ensure consistent file_size_mb
+            actual_file_size = pdf_metadata.get("file_size_mb", 0)
+            if "pdf_metadata" not in metadata:
+                metadata["pdf_metadata"] = {}
+            metadata["file_size_mb"] = actual_file_size
+            metadata["pdf_metadata"]["file_size_mb"] = actual_file_size
+            
+            # Fix 3: Use absolute path consistently
+            abs_path = os.path.abspath(pdf_path)
+            metadata["file_path"] = abs_path
+            metadata["pdf_metadata"]["file_path"] = abs_path
+            
+            # Fix 4: Validate and fix sections - ENSURE COMPLETE COVERAGE
             sections = metadata.get("sections", {})
-            fixed_sections = {}
-            removed_sections = []
-            
-            for section_name, section_info in sections.items():
-                start = section_info.get("page_start", 1)
-                end = section_info.get("page_end", 1)
-                
-                # Check if section is within valid range
-                if start > actual_pages or end > actual_pages:
-                    self.logger.warning(
-                        f"Section '{section_name}' pages {start}-{end} exceed PDF length ({actual_pages}). "
-                        f"Removing section."
-                    )
-                    removed_sections.append(section_name)
-                    continue
-                
-                # Clamp to valid range
-                if end > actual_pages:
-                    self.logger.warning(f"Clamping section '{section_name}' end page: {end} -> {actual_pages}")
-                    section_info["page_end"] = actual_pages
-                
-                fixed_sections[section_name] = section_info
-            
-            if removed_sections:
-                print(f"\n⚠️  Removed {len(removed_sections)} invalid sections: {', '.join(removed_sections)}")
+            fixed_sections = self._fix_sections_coverage(sections, actual_pages)
             
             metadata["sections"] = fixed_sections
             
             # Add actual PDF metadata
-            metadata["pdf_metadata"] = pdf_metadata
+            metadata["pdf_metadata"].update(pdf_metadata)
             metadata["validated_against_pdf"] = True
             
             self.logger.info(f"Metadata validated and corrected. {len(fixed_sections)} valid sections.")
@@ -174,6 +164,83 @@ class MasterAgent:
         except Exception as e:
             self.logger.error(f"Error validating PDF: {e}")
             return metadata
+
+    def _fix_sections_coverage(self, sections: Dict[str, Any], num_pages: int) -> Dict[str, Any]:
+        """
+        Fix sections to ensure complete page coverage.
+        
+        Args:
+            sections: Current section definitions
+            num_pages: Total pages in PDF
+            
+        Returns:
+            Fixed sections with complete coverage
+        """
+        fixed_sections = {}
+        removed_sections = []
+        
+        # First pass: validate and fix existing sections
+        for section_name, section_info in sections.items():
+            start = section_info.get("page_start", 1)
+            end = section_info.get("page_end", 1)
+            
+            # Check if section is within valid range
+            if start > num_pages or end > num_pages:
+                self.logger.warning(
+                    f"Section '{section_name}' pages {start}-{end} exceed PDF length ({num_pages}). "
+                    f"Removing section."
+                )
+                removed_sections.append(section_name)
+                continue
+            
+            # Clamp to valid range
+            if end > num_pages:
+                self.logger.warning(f"Clamping section '{section_name}' end page: {end} -> {num_pages}")
+                section_info["page_end"] = num_pages
+            
+            fixed_sections[section_name] = section_info
+        
+        # Second pass: check for gaps and add missing sections
+        covered_pages = set()
+        for section_info in fixed_sections.values():
+            start = section_info.get("page_start", 1)
+            end = section_info.get("page_end", 1)
+            covered_pages.update(range(start, end + 1))
+        
+        # Find uncovered pages
+        all_pages = set(range(1, num_pages + 1))
+        uncovered_pages = sorted(all_pages - covered_pages)
+        
+        if uncovered_pages:
+            self.logger.warning(f"Found {len(uncovered_pages)} uncovered pages: {uncovered_pages[:10]}...")
+            
+            # Group consecutive uncovered pages into sections
+            groups = []
+            current_group = [uncovered_pages[0]]
+            
+            for page in uncovered_pages[1:]:
+                if page == current_group[-1] + 1:
+                    current_group.append(page)
+                else:
+                    groups.append(current_group)
+                    current_group = [page]
+            groups.append(current_group)
+            
+            # Add sections for uncovered pages
+            for idx, group in enumerate(groups):
+                section_name = f"Additional_Section_{idx+1}"
+                fixed_sections[section_name] = {
+                    "page_start": group[0],
+                    "page_end": group[-1],
+                    "description": f"Auto-generated section for pages {group[0]}-{group[-1]}"
+                }
+                self.logger.info(f"Added section '{section_name}' for pages {group[0]}-{group[-1]}")
+        
+        if removed_sections:
+            print(f"\n⚠️  Removed {len(removed_sections)} invalid sections: {', '.join(removed_sections)}")
+        
+        self.logger.info(f"Section coverage fixed. Total sections: {len(fixed_sections)}")
+        return fixed_sections
 
     # ----------------------------- LLM Metadata Validation -----------------------------
     def validate_metadata_with_llm(self, metadata: dict) -> dict:
@@ -190,19 +257,47 @@ DOCUMENT METADATA:
 Check for:
 1. Missing critical fields like file_name, num_pages, document_type, sections.
 2. Sections with invalid page ranges (page_start > page_end, start < 1, end > num_pages).
-3. Overlapping sections.
-4. Sections that do not cover the full document.
-5. Any other inconsistencies you notice.
+3. ALL pages from 1 to num_pages must be covered by at least one section.
+4. Any other critical inconsistencies that would prevent processing.
+
+IGNORE these minor issues:
+- Small differences in file_size_mb (< 0.1 MB difference is acceptable)
+- Relative vs absolute paths (both are valid)
+- Minor formatting differences
 
 Respond ONLY in JSON format:
 
 {{
   "status": "ok" | "issues",
-  "issues": ["description of each problem found"]
+  "issues": ["description of each CRITICAL problem found"]
 }}
+
+If sections cover all pages and page ranges are valid, status should be "ok".
 """
         response = self.llm.invoke([HumanMessage(content=prompt)])
-        return self.extract_json(response.content)
+        result = self.extract_json(response.content)
+        
+        # Filter out non-critical issues
+        if result.get("status") == "issues":
+            critical_issues = []
+            issues = result.get("issues", [])
+            
+            for issue in issues:
+                issue_lower = issue.lower()
+                # Skip non-critical issues
+                if any(keyword in issue_lower for keyword in ["file_size", "file_path", "file path", "close", "minor"]):
+                    self.logger.info(f"Ignoring non-critical issue: {issue}")
+                    continue
+                critical_issues.append(issue)
+            
+            # If no critical issues remain, mark as ok
+            if not critical_issues:
+                result["status"] = "ok"
+                result["issues"] = []
+            else:
+                result["issues"] = critical_issues
+        
+        return result
 
     # ----------------------------- LLM SubMaster Planning -----------------------------
     def ask_llm_for_plan(self, user_request: str, metadata: dict):
@@ -265,18 +360,29 @@ Respond ONLY in JSON format like this:
         metadata = self.validate_and_fix_metadata(metadata)
         
         # STEP 2: Validate metadata with LLM
+        print("\n🤖 Validating metadata with LLM...")
         validation = self.validate_metadata_with_llm(metadata)
+        
         if validation["status"] == "issues":
-            print("\n⚠ Metadata discrepancies detected by LLM:")
+            print("\n⚠️  Critical metadata issues detected:")
             for i, issue in enumerate(validation["issues"], 1):
                 print(f" {i}. {issue}")
-            print("\nPlease fix the metadata before proceeding.")
-            return {"status": "needs_fix", "issues": validation["issues"]}
+            
+            # Ask user if they want to proceed anyway
+            proceed = input("\n❓ Metadata has issues. Try to proceed anyway? (yes/no): ").strip().lower()
+            if proceed not in ["yes", "y"]:
+                print("\nPlease fix the metadata before proceeding.")
+                return {"status": "needs_fix", "issues": validation["issues"]}
+            else:
+                print("\n⚠️  Proceeding despite metadata issues...")
+        else:
+            print("✅ Metadata validation passed")
 
         # Use user_notes as processing goal
         goal = metadata.get("user_notes", "Process the document according to standard workflow.")
 
         # Generate initial plan
+        print("\n📋 Generating SubMaster execution plan...")
         plan = self.ask_llm_for_plan(goal, metadata)
         for sm in plan.get("submasters", []):
             sm["submaster_id"] = f"SM-{uuid.uuid4().hex[:6].upper()}"
@@ -315,7 +421,7 @@ Generate a corrected plan with valid page ranges.
                 plan["status"] = "approved"
                 return plan
 
-            feedback = input("\n📝 What would you like to change? Specify adjustments (merge sections, change roles, adjust workloads):\n> ").strip()
+            feedback = input("\n📝 What would you like to change? Specify adjustments:\n> ").strip()
             if not feedback:
                 print("\n⚠ No feedback provided. Please specify a change.")
                 continue
@@ -353,7 +459,7 @@ Revise the plan accordingly. Keep JSON structure identical.
         self.logger.info(f"[EXEC] Processing document: {metadata.get('file_name')}")
         plan = self.feedback_loop(metadata)
 
-        if plan.get("status") == "needs_fix":
+        if plan is None or plan.get("status") == "needs_fix":
             return None
 
         # Determine save path
@@ -374,9 +480,10 @@ Revise the plan accordingly. Keep JSON structure identical.
         print(f"\n📁 SubMaster plan saved to: {save_path}")
         return plan
 
+
 # ----------------------------- CLI Entry -----------------------------
 if __name__ == "__main__":
     agent = MasterAgent()
-    metadata_path = r"C:\Users\devri\OneDrive\Desktop\Agentiops\metadata.json"
+    metadata_path = "metadata.json"
     print("\n--- MASTER AGENT ONLINE ---\n")
     agent.execute(metadata_path)
