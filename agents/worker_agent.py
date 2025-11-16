@@ -12,13 +12,9 @@ from utils.llm_helper import LLMProcessor, analyze_page
 
 logger = get_logger("WorkerAgent")
 
-
 @ray.remote
 class WorkerAgent:
-    """
-    WorkerAgent processes individual pages or small chunks.
-    Used for fine-grained parallel processing under SubMaster coordination.
-    """
+    """WorkerAgent processes individual pages or small chunks."""
     
     def __init__(
         self, 
@@ -26,14 +22,7 @@ class WorkerAgent:
         llm_model: str = "gemini-2.0-flash-exp",
         processing_requirements: list = None
     ):
-        """
-        Initialize Worker Agent.
-        
-        Args:
-            worker_id: Unique worker identifier
-            llm_model: LLM model to use
-            processing_requirements: List of processing tasks
-        """
+        """Initialize Worker Agent."""
         self.worker_id = worker_id
         self.llm_model = llm_model
         self.processing_requirements = processing_requirements or []
@@ -63,18 +52,7 @@ class WorkerAgent:
         role: str,
         section_name: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        Process a single page with LLM analysis.
-        
-        Args:
-            page_num: Page number
-            text: Extracted text from page
-            role: SubMaster's role/instructions
-            section_name: Name of section this page belongs to
-            
-        Returns:
-            Processing result with analysis
-        """
+        """Process a single page with LLM analysis."""
         start_time = time.time()
         logger.info(f"[{self.worker_id}] Processing page {page_num}")
         
@@ -104,7 +82,7 @@ class WorkerAgent:
                 page_result.update(analysis)
                 
                 logger.info(
-                    f"[{self.worker_id}] Page {page_num} analyzed successfully: "
+                    f"[{self.worker_id}] ✅ Page {page_num} analyzed: "
                     f"{len(analysis.get('entities', []))} entities, "
                     f"{len(analysis.get('keywords', []))} keywords"
                 )
@@ -114,10 +92,14 @@ class WorkerAgent:
                 page_result["llm_error"] = str(e)
                 page_result["summary"] = "[LLM analysis failed - text extracted only]"
                 page_result["status"] = "error"
+                page_result["entities"] = []
+                page_result["keywords"] = []
         else:
             # No LLM processing
-            page_result["summary"] = "[No LLM analysis - text extracted only]"
+            page_result["summary"] = "[Text too short for analysis]"
             page_result["status"] = "skipped"
+            page_result["entities"] = []
+            page_result["keywords"] = []
             
             if not self.llm_processor:
                 logger.warning(f"[{self.worker_id}] No LLM processor available")

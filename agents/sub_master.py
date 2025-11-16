@@ -1,4 +1,8 @@
 # agents/sub_master.py
+"""
+SubMaster coordinates Worker Agents to process document sections.
+"""
+
 import time
 import uuid
 import ray
@@ -9,12 +13,9 @@ from agents.worker_agent import WorkerAgent
 
 logger = get_logger("SubMaster")
 
-
 @ray.remote
 class SubMaster:
-    """
-    SubMaster coordinates Worker Agents to process document sections.
-    """
+    """SubMaster coordinates Worker Agents to process document sections."""
     
     def __init__(self, plan_piece, metadata):
         self.sm_id = plan_piece.get("submaster_id", f"SM-{uuid.uuid4().hex[:6].upper()}")
@@ -32,7 +33,7 @@ class SubMaster:
         # Get processing requirements
         self.processing_requirements = metadata.get("processing_requirements", [])
         
-        # Get LLM config from metadata
+        # Get LLM config
         self.llm_model = metadata.get("preferred_model", "gemini-2.0-flash-exp")
         
         # Worker configuration
@@ -41,10 +42,10 @@ class SubMaster:
         self.workers = []
         
         logger.info(
-            f"[{self.sm_id}] Init: role={self.role}, pages={self.pages}, "
+            f"[{self.sm_id}] Initialized: role={self.role}, pages={self.pages}, "
             f"workers={self.num_workers_per_submaster}, model={self.llm_model}"
         )
-
+    
     def initialize(self):
         """Initialize PDF extractor and spawn Worker Agents."""
         self.status = "ready"
@@ -53,7 +54,7 @@ class SubMaster:
         try:
             if self.pdf_path:
                 self.pdf_extractor = PDFExtractor(self.pdf_path)
-                logger.info(f"[{self.sm_id}] PDF extractor initialized")
+                logger.info(f"[{self.sm_id}] PDF extractor initialized: {self.pdf_extractor.num_pages} pages")
             else:
                 logger.warning(f"[{self.sm_id}] No PDF path provided")
         except Exception as e:
@@ -89,12 +90,10 @@ class SubMaster:
             self.workers = []
         
         return {"sm_id": self.sm_id, "status": "ready", "num_workers": len(self.workers)}
-
+    
     def process(self):
-        """
-        Process assigned pages by delegating to Worker Agents.
-        Uses round-robin distribution of pages to workers.
-        """
+        """Process assigned pages by delegating to Worker Agents."""
+        start_time = time.time()
         self.status = "running"
         output = []
         
@@ -104,34 +103,38 @@ class SubMaster:
         total_keywords = 0
         llm_successes = 0
         llm_failures = 0
-
+        
         # Handle multiple page ranges
         if len(self.pages) % 2 != 0:
             raise ValueError(f"Invalid page_range for {self.sm_id}: {self.pages}")
-
+        
         # Collect all pages to process
         all_pages = []
         for i in range(0, len(self.pages), 2):
             start, end = self.pages[i], self.pages[i + 1]
             all_pages.extend(range(start, end + 1))
         
-        logger.info(f"[{self.sm_id}] Processing {len(all_pages)} pages with {len(self.workers)} workers")
+        logger.info(
+            f"[{self.sm_id}] Processing {len(all_pages)} pages "
+            f"({all_pages[0]}-{all_pages[-1]}) with {len(self.workers)} workers"
+        )
         
         if not self.pdf_extractor:
             logger.error(f"[{self.sm_id}] No PDF extractor available")
-            return self._create_error_result(all_pages)
+            return self._create_error_result(all_pages, "No PDF extractor")
         
         if not self.workers:
             logger.error(f"[{self.sm_id}] No workers available")
-            return self._create_error_result(all_pages)
+            return self._create_error_result(all_pages, "No workers")
         
         # Extract text for all pages first
         try:
-            logger.info(f"[{self.sm_id}] Extracting text from pages {all_pages[0]}-{all_pages[-1]}...")
+            logger.info(f"[{self.sm_id}] Extracting text from pages...")
             extracted_pages = self.pdf_extractor.extract_page_range(all_pages[0], all_pages[-1])
+            logger.info(f"[{self.sm_id}] ✅ Extracted {len(extracted_pages)} pages")
         except Exception as e:
             logger.error(f"[{self.sm_id}] Failed to extract pages: {e}")
-            return self._create_error_result(all_pages)
+            return self._create_error_result(all_pages, f"Extraction failed: {e}")
         
         # Distribute pages to workers using Ray futures
         page_futures = []
@@ -173,7 +176,7 @@ class SubMaster:
                 else:
                     llm_failures += 1
                 
-                logger.debug(f"[{self.sm_id}] Completed page {page_num}")
+                logger.debug(f"[{self.sm_id}] ✅ Completed page {page_num}")
                 
             except Exception as e:
                 logger.error(f"[{self.sm_id}] Worker failed on page {page_num}: {e}")
@@ -181,7 +184,9 @@ class SubMaster:
                     "page": page_num,
                     "error": str(e),
                     "summary": f"[ERROR: Worker failed on page {page_num}]",
-                    "status": "error"
+                    "status": "error",
+                    "entities": [],
+                    "keywords": []
                 })
                 llm_failures += 1
         
@@ -189,16 +194,17 @@ class SubMaster:
         output.sort(key=lambda x: x.get("page", 0))
         
         self.status = "completed"
+        elapsed = time.time() - start_time
         
         # Generate aggregate summary
         aggregate_summary = self._generate_aggregate_summary(output)
         
         logger.info(
-            f"[{self.sm_id}] Completed: {len(output)} pages, "
-            f"{total_chars_extracted:,} chars, "
-            f"{llm_successes} LLM successes, {llm_failures} failures"
+            f"[{self.sm_id}] ✅ Completed in {elapsed:.1f}s: "
+            f"{len(output)} pages, {total_chars_extracted:,} chars, "
+            f"{llm_successes} successes, {llm_failures} failures"
         )
-
+        
         return {
             "sm_id": self.sm_id,
             "role": self.role,
@@ -212,7 +218,8 @@ class SubMaster:
             "total_keywords": total_keywords,
             "llm_successes": llm_successes,
             "llm_failures": llm_failures,
-            "aggregate_summary": aggregate_summary
+            "aggregate_summary": aggregate_summary,
+            "elapsed_time": elapsed
         }
     
     def _get_section_for_page(self, page_num: int) -> str:
@@ -239,15 +246,19 @@ class SubMaster:
         if not summaries:
             return "No analysis results available."
         
-        # Combine first few summaries
-        combined = " ".join(summaries[:3])
+        # Combine summaries intelligently
+        if len(summaries) <= 3:
+            combined = " ".join(summaries)
+        else:
+            # Use first, middle, and last summaries
+            combined = f"{summaries[0]} ... {summaries[len(summaries)//2]} ... {summaries[-1]}"
         
-        if len(combined) > 500:
-            combined = combined[:500] + "..."
+        if len(combined) > 600:
+            combined = combined[:600] + "..."
         
         return combined
     
-    def _create_error_result(self, pages: List[int]) -> Dict[str, Any]:
+    def _create_error_result(self, pages: List[int], error_msg: str) -> Dict[str, Any]:
         """Create error result when processing cannot proceed."""
         return {
             "sm_id": self.sm_id,
@@ -256,7 +267,8 @@ class SubMaster:
             "page_range": self.pages,
             "num_workers": 0,
             "results": [
-                {"page": p, "error": "Processing failed", "summary": "[ERROR]", "status": "error"}
+                {"page": p, "error": error_msg, "summary": f"[ERROR: {error_msg}]", 
+                 "status": "error", "entities": [], "keywords": []}
                 for p in pages
             ],
             "total_pages": len(pages),
@@ -265,5 +277,6 @@ class SubMaster:
             "total_keywords": 0,
             "llm_successes": 0,
             "llm_failures": len(pages),
-            "aggregate_summary": "Processing failed"
+            "aggregate_summary": f"Processing failed: {error_msg}",
+            "elapsed_time": 0
         }

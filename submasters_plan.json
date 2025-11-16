@@ -1,32 +1,37 @@
 {
   "num_submasters": 2,
-  "distribution_strategy": "The document is divided into two parts. SubMaster 1 focuses on the initial sections (Abstract and Introduction) to provide a high-level overview and background. SubMaster 2 handles the remaining sections (Related Work and Methodology_Results) to delve into the literature review and experimental details. This division allows for a logical flow of information, starting with the general context and progressing to the specific methods and results.",
+  "distribution_strategy": "The document is split into two submasters to focus on the user's request for key findings and methodologies. SubMaster 1 focuses on extracting methodologies from pages 1-10, prioritizing the Methodology and Related Work sections but also scanning other sections for relevant methodological details. SubMaster 2 focuses on extracting key findings from pages 10-21, prioritizing the Results section and summarizing the Abstract and Introduction for context. This ensures a comprehensive extraction of both methodologies and findings, with page ranges adjusted based on user feedback.",
   "submasters": [
     {
-      "role": "Summarize Abstract and Introduction, focusing on key concepts and contributions.",
+      "role": "Extract Methodologies from Pages 1-10",
       "assigned_sections": [
         "Abstract",
-        "Introduction"
+        "Introduction",
+        "Related_Work",
+        "Methodology",
+        "Experiments"
       ],
       "page_range": [
         1,
-        8
+        10
       ],
       "estimated_workload": "medium",
-      "submaster_id": "SM-439C6A"
+      "submaster_id": "SM-B419E8"
     },
     {
-      "role": "Extract key methodologies, findings, and keywords from Related Work and Methodology_Results sections.",
+      "role": "Extract Key Findings from Pages 10-21 and Summarize Context",
       "assigned_sections": [
-        "Related_Work",
-        "Methodology_Results"
+        "Experiments",
+        "Results",
+        "Discussion",
+        "Conclusion"
       ],
       "page_range": [
-        9,
+        10,
         21
       ],
-      "estimated_workload": "high",
-      "submaster_id": "SM-E382CF"
+      "estimated_workload": "medium",
+      "submaster_id": "SM-800DA5"
     }
   ],
   "status": "approved"
