@@ -1,0 +1,1221 @@
+{
+  "SM-001": {
+    "status": "ok",
+    "output": {
+      "sm_id": "SM-001",
+      "role": "Summarize Abstract and Introduction sections for overview",
+      "assigned_sections": [
+        "Abstract",
+        "Introduction"
+      ],
+      "page_range": [
+        1,
+        6
+      ],
+      "num_workers": 4,
+      "results": [
+        {
+          "page": 1,
+          "section": "Abstract",
+          "char_count": 3330,
+          "text_preview": "Preprint. Under Review\nDOAI MODELSPERFORMHUMAN-LIKEABSTRACT\nREASONINGACROSSMODALITIES?\nClaas Beger\nSanta Fe Institute\nclaasbeger@santafe.eduRyan Yi\nSanta Fe Institute\nryi@santafe.eduShuhao Fu\nSanta Fe Institute\nfushuhao@santafe.edu\nArseny Moskvichev\nAdvanced Micro Devices, Inc.\narseny.moskvichev@gma...",
+          "worker_id": "SM-001-W1",
+          "summary": "The paper investigates the abstraction and reasoning capabilities of AI models using the ConceptARC benchmark, evaluating them across different modalities (textual vs. visual), tool usage, and reasoning effort. The study finds that while some models match human accuracy in text-based tasks, their solutions often rely on surface-level shortcuts rather than intended abstractions. In visual tasks, models show lower accuracy but still exhibit some abstract reasoning, suggesting that accuracy alone may overestimate or underestimate their capabilities. The authors propose a dual evaluation framework combining output accuracy and rule-level analysis for a more faithful assessment of abstract reasoning.",
+          "entities": [
+            "OpenAI’s o3-preview reasoning model",
+            "ARC-AGI benchmark",
+            "ConceptARC benchmark",
+            "Python tools",
+            "natural-language rules",
+            "Claas Beger",
+            "Ryan Yi",
+            "Shuhao Fu",
+            "Arseny Moskvichev",
+            "Sarah W. Tsai",
+            "Sivasankaran Rajamanickam",
+            "Melanie Mitchell",
+            "Santa Fe Institute",
+            "Advanced Micro Devices, Inc.",
+            "Sandia National Laboratories",
+            "Carey (2011)",
+            "Hofstadter (2001)",
+            "Lake et al. (2017)",
+            "Foundalis (2025)",
+            "Hofstadter (1995)",
+            "Zhang et al. (2019)",
+            "Abstraction and Reasoning Corpus (ARC)",
+            "Chollet (2019)"
+          ],
+          "keywords": [
+            "abstract reasoning",
+            "multimodal models",
+            "ConceptARC benchmark",
+            "textual vs. visual modalities",
+            "Python tools",
+            "rule-level analysis",
+            "surface-level shortcuts",
+            "accuracy evaluation",
+            "abstraction-centered intelligence",
+            "few-shot rule-induction",
+            "analogical reasoning"
+          ],
+          "key_points": [
+            "AI models may rely on surface-level shortcuts rather than intended abstractions in text-based tasks.",
+            "Visual modality tasks show lower accuracy but reveal some abstract reasoning capabilities.",
+            "Accuracy alone may overestimate or underestimate abstract reasoning capabilities.",
+            "A dual evaluation framework (accuracy + rule analysis) provides a more faithful assessment.",
+            "Models still lag behind humans in abstract reasoning."
+          ],
+          "technical_terms": [
+            "abstraction-centered intelligence",
+            "few-shot rule-induction",
+            "analogical reasoning",
+            "multimodal models",
+            "rule-level analysis",
+            "surface-level shortcuts"
+          ],
+          "status": "success",
+          "processing_time": 6.042104721069336
+        },
+        {
+          "page": 2,
+          "section": "Introduction",
+          "char_count": 4749,
+          "text_preview": "Preprint. Under Review\nTo solve a task, an agent should infer a rule governing the demonstrations and apply that rule to the\ntest input to produce a correct output grid.\nChollet 2025 devised 1,000 such tasks, releasing 400 easier puzzles as a “training set,” 400 harder\npuzzles as an “evaluation set,...",
+          "worker_id": "SM-001-W2",
+          "summary": "The page discusses the ARC-AGI Prize competition, where AI models were evaluated on abstract reasoning tasks. Chollet (2025) created 1,000 tasks, with the top-performing model (o3-preview) achieving 88% accuracy on a semi-private test set. The study investigates whether AI models like o3 use human-like abstract reasoning or rely on shortcuts. It assesses commercial and open-weight models on ConceptARC, a benchmark designed to test spatial and semantic concepts. The experiments explore reasoning in both textual and visual modalities, as well as the impact of reasoning effort and external tools.",
+          "entities": [
+            "ARC-AGI Prize competition",
+            "ConceptARC",
+            "o3 model",
+            "o3-preview",
+            "OpenAI",
+            "Chollet 2025",
+            "Chollet et al. 2024",
+            "Moskvichev et al. 2023",
+            "LLM",
+            "Python code",
+            "accuracy",
+            "text-based representations",
+            "visual modalities"
+          ],
+          "keywords": [
+            "abstract reasoning",
+            "ARC tasks",
+            "ConceptARC",
+            "o3 model",
+            "shortcuts",
+            "generalizable abstractions",
+            "spatial concepts",
+            "semantic concepts",
+            "textual representations",
+            "visual modalities",
+            "reasoning effort",
+            "external tools"
+          ],
+          "key_points": [
+            "The ARC-AGI Prize competition evaluated AI models on abstract reasoning tasks, with the top model achieving 88% accuracy.",
+            "ConceptARC is a benchmark designed to test spatial and semantic concepts in AI models.",
+            "The study investigates whether AI models use human-like abstractions or rely on shortcuts.",
+            "Experiments explore reasoning in both textual and visual modalities, as well as the impact of reasoning effort and external tools."
+          ],
+          "technical_terms": [
+            "abstract reasoning",
+            "text-based representations",
+            "visual modalities",
+            "reasoning effort",
+            "external tools",
+            "generalizable abstractions",
+            "shortcuts",
+            "spatial concepts",
+            "semantic concepts"
+          ],
+          "status": "success",
+          "processing_time": 3.7271952629089355
+        },
+        {
+          "page": 3,
+          "section": "Introduction",
+          "char_count": 2913,
+          "text_preview": "Preprint. Under Review\nFigure 1: Each row shows a task from the ConceptARC benchmark. Each task shown consists of\nthree demonstrations of a transformation and one test grid. In this study, the solver is tasked with\ngenerating a rule that describes the transformations and applying that rule to the te...",
+          "worker_id": "SM-001-W3",
+          "summary": "This page from the Introduction section describes the ConceptARC benchmark, a dataset of 480 tasks designed to evaluate abstract reasoning in AI models. The study evaluates four proprietary multimodal reasoning models (OpenAI's o3, o4-mini, Google's Gemini 2.5 Pro, and Anthropic's Claude Sonnet 4) and three non-reasoning multimodal models (OpenAI's GPT-4o, Meta's Llama 4 Scout, and Alibaba's Qwen 2.5 VL 72B) on ConceptARC tasks. The models were tested on both textual and visual modalities, generating JSON outputs with transformation rules and output grids. The evaluation criteria included grid output accuracy and the correctness of the generated rules, with results compared to human performance on the same tasks.",
+          "entities": [
+            "ConceptARC",
+            "ARC corpus",
+            "OpenAI",
+            "Google",
+            "Anthropic",
+            "Meta",
+            "Alibaba",
+            "o3",
+            "o4-mini",
+            "Gemini 2.5 Pro",
+            "Claude Sonnet 4",
+            "GPT-4o",
+            "Llama 4 Scout",
+            "Qwen 2.5 VL 72B",
+            "Moskvichev et al. 2023",
+            "Chollet et al. 2024",
+            "Prolific Academic",
+            "pass@1",
+            "pass@2",
+            "pass@3"
+          ],
+          "keywords": [
+            "ConceptARC",
+            "abstract reasoning",
+            "multimodal models",
+            "spatial concepts",
+            "semantic concepts",
+            "transformation rules",
+            "grid output accuracy",
+            "JSON object",
+            "textual modality",
+            "visual modality",
+            "human performance",
+            "pass@1",
+            "pass@2",
+            "pass@3"
+          ],
+          "key_points": [
+            "ConceptARC is a benchmark of 480 tasks designed to evaluate abstract reasoning in AI models.",
+            "Four proprietary multimodal reasoning models and three non-reasoning multimodal models were evaluated.",
+            "Models generated JSON outputs with transformation rules and output grids.",
+            "Evaluation criteria included grid output accuracy and rule correctness.",
+            "Results were compared to human performance on the same tasks."
+          ],
+          "technical_terms": [
+            "ConceptARC",
+            "multimodal models",
+            "transformation rules",
+            "JSON object",
+            "textual modality",
+            "visual modality",
+            "pass@1",
+            "pass@2",
+            "pass@3"
+          ],
+          "status": "success",
+          "processing_time": 4.031917095184326
+        },
+        {
+          "page": 4,
+          "section": "Introduction",
+          "char_count": 4902,
+          "text_preview": "Preprint. Under Review\nWe evaluated o3 under its low- and medium-effort reasoning settings.5We evaluated Gemini 2.5\nPro and Claude Sonnet 4 with a reasoning budget of 16,000 tokens, chosen to roughly approximate\nOpenAI’s medium-effort setting. Additionally, across all reasoning models and modalities...",
+          "worker_id": "SM-001-W4",
+          "summary": "The page evaluates AI models (o3, Gemini 2.5 Pro, Claude Sonnet 4) and human performance on ARC tasks, focusing on output-grid accuracy and natural-language rule generation. The study compares models under low/medium-effort reasoning settings and with/without Python tool access. Output-grid correctness is assessed via exact matches to ground truth, while rule correctness is manually annotated into 'incorrect', 'correct-unintended', and 'correct-intended' categories. The findings highlight that models can achieve correct outputs through unintended shortcuts, not just abstract reasoning.",
+          "entities": [
+            "o3",
+            "Gemini 2.5 Pro",
+            "Claude Sonnet 4",
+            "ConceptARC",
+            "Python tools",
+            "Du et al.",
+            "Geirhos et al.",
+            "Moskvichev et al.",
+            "OpenAI"
+          ],
+          "keywords": [
+            "ARC tasks",
+            "output-grid accuracy",
+            "natural-language rules",
+            "shortcuts",
+            "abstract reasoning",
+            "reasoning effort",
+            "tool-access conditions",
+            "spurious patterns",
+            "human judgment",
+            "correct-intended",
+            "correct-unintended"
+          ],
+          "key_points": [
+            "Models were evaluated under different reasoning settings and tool-access conditions.",
+            "Output-grid accuracy is assessed via exact matches to ground truth.",
+            "Natural-language rules are manually annotated to distinguish intended vs. unintended correctness.",
+            "Models can achieve correct outputs through unintended shortcuts, not just abstract reasoning.",
+            "Human-generated rules are compared to model-generated rules for evaluation."
+          ],
+          "technical_terms": [
+            "output-grid accuracy",
+            "natural-language rules",
+            "correct-intended",
+            "correct-unintended",
+            "spurious patterns",
+            "reasoning budget",
+            "tool-access conditions"
+          ],
+          "status": "success",
+          "processing_time": 3.152730941772461
+        },
+        {
+          "page": 5,
+          "section": "Introduction",
+          "char_count": 3562,
+          "text_preview": "Preprint. Under Review\nTable 1:Reasoning models:Output-grid accuracy (pass@1) for Concept-ARC across models and\nexperimental settings. Accuracy is shown in %. Each cell showstextual / visualaccuracy. For o3 and\no4-mini, we use the “low” and “medium” effort settings in the OpenAI API. For Claude and ...",
+          "worker_id": "SM-001-W1",
+          "summary": "This page presents an evaluation of reasoning models on the Concept-ARC dataset, comparing their performance across textual and visual modalities with varying effort levels and tool usage. The study highlights a significant performance gap between textual and visual tasks, with Python tools improving visual accuracy substantially for some models. Results show that increased reasoning effort correlates with higher accuracy in textual tasks, while visual tasks benefit more from tool-assisted execution. The analysis also identifies common failure modes, such as grid size recognition errors and format mismatches, and compares model performance to human baselines.",
+          "entities": [
+            "Concept-ARC",
+            "OpenAI API",
+            "Claude",
+            "Gemini",
+            "Python tools",
+            "Moskvichev et al.",
+            "ARC-Prize",
+            "pass@1 accuracy",
+            "output-grid accuracy",
+            "textual modality",
+            "visual modality",
+            "o3",
+            "o4-mini"
+          ],
+          "keywords": [
+            "reasoning models",
+            "output-grid accuracy",
+            "textual modality",
+            "visual modality",
+            "Python tools",
+            "Concept-ARC",
+            "pass@1 accuracy",
+            "effort settings",
+            "failure cases",
+            "grid size recognition",
+            "human baselines"
+          ],
+          "key_points": [
+            "Reasoning models outperform non-reasoning models in both textual and visual tasks.",
+            "Python tools significantly improve visual accuracy for some models but not textual accuracy.",
+            "Increased reasoning effort enhances textual accuracy but leads to more Python code execution in visual tasks.",
+            "Models struggle with grid size recognition in visual tasks, partially mitigated by Python tools.",
+            "Human performance on Concept-ARC is lower than top reasoning models in the textual modality."
+          ],
+          "technical_terms": [
+            "pass@1 accuracy",
+            "output-grid accuracy",
+            "textual modality",
+            "visual modality",
+            "Python tools",
+            "reasoning effort",
+            "grid size recognition",
+            "invalid outputs",
+            "ground-truth grids"
+          ],
+          "status": "success",
+          "processing_time": 3.208427906036377
+        },
+        {
+          "page": 6,
+          "section": "Introduction",
+          "char_count": 5373,
+          "text_preview": "Preprint. Under Review\n3.2 RULEEVALUATION\nOur team manually evaluated the rules generated by o3 in all settings and by Claude Sonnet 4 and\nGemini 2.5 Pro in the medium-effort + tools setting, for both textual and visual modalities. We also\nevaluated the pass@1 rules generated by humans, using data f...",
+          "worker_id": "SM-001-W2",
+          "summary": "This page evaluates the rule-generation capabilities of AI models (o3, Claude Sonnet 4, and Gemini 2.5 Pro) and human participants in the ConceptARC tasks, focusing on textual and visual modalities. The team manually assessed rules, categorizing them as correct-intended, correct-unintended, or incorrect, and compared model performance against human baselines. Key findings include o3's high output accuracy in textual settings but reliance on superficial patterns, while Claude and Gemini showed fewer unintended rules but lower overall accuracy. The analysis highlights potential overestimation of abstract reasoning based solely on output accuracy, especially in the visual domain.",
+          "entities": [
+            "o3",
+            "Claude Sonnet 4",
+            "Gemini 2.5 Pro",
+            "ConceptARC",
+            "Moskvichev et al. (2023)",
+            "Chollet (2024)",
+            "output grid accuracy",
+            "correct-intended rules",
+            "correct-unintended rules",
+            "incorrect rules",
+            "textual modality",
+            "visual modality"
+          ],
+          "keywords": [
+            "rule evaluation",
+            "abstract reasoning",
+            "ConceptARC tasks",
+            "textual modality",
+            "visual modality",
+            "output grid accuracy",
+            "correct-intended rules",
+            "correct-unintended rules",
+            "incorrect rules",
+            "superficial patterns",
+            "spurious associations"
+          ],
+          "key_points": [
+            "Models and humans were evaluated on rule generation for ConceptARC tasks in textual and visual modalities.",
+            "o3 achieved high output accuracy in textual settings but relied on unintended rules.",
+            "Claude and Gemini had fewer unintended rules but lower overall accuracy than o3.",
+            "Human participants showed fewer unintended rules compared to models.",
+            "Output accuracy alone may overestimate a model's abstract reasoning ability."
+          ],
+          "technical_terms": [
+            "rule evaluation",
+            "abstract reasoning",
+            "textual modality",
+            "visual modality",
+            "output grid accuracy",
+            "correct-intended rules",
+            "correct-unintended rules",
+            "incorrect rules",
+            "spurious associations"
+          ],
+          "status": "success",
+          "processing_time": 2.9013099670410156
+        }
+      ],
+      "total_pages": 6,
+      "total_chars": 24829,
+      "total_entities": 90,
+      "total_keywords": 70,
+      "llm_successes": 6,
+      "llm_failures": 0,
+      "aggregate_summary": "The paper investigates the abstraction and reasoning capabilities of AI models using the ConceptARC benchmark, evaluating them across different modalities (textual vs. visual), tool usage, and reasoning effort. The study finds that while some models match human accuracy in text-based tasks, their solutions often rely on surface-level shortcuts rather than intended abstractions. In visual tasks, models show lower accuracy but still exhibit some abstract reasoning, suggesting that accuracy alone may overestimate or underestimate their capabilities. The authors propose a dual evaluation framework...",
+      "elapsed_time": 9.421341896057129
+    }
+  },
+  "SM-002": {
+    "status": "ok",
+    "output": {
+      "sm_id": "SM-002",
+      "role": "Extract key findings and results from the first half of the Body",
+      "assigned_sections": [
+        "Body"
+      ],
+      "page_range": [
+        7,
+        11
+      ],
+      "num_workers": 4,
+      "results": [
+        {
+          "page": 7,
+          "section": "Body",
+          "char_count": 2324,
+          "text_preview": "Preprint. Under Review\nTextual Visual Human\nCorrect Incorrect Correct Incorrect Correct Incorrect Correct Incorrect Correct Incorrect Correct Incorrect Correct Incorrect\nGrid Grid Grid Grid Grid Grid Grid\no3 Claude Gemini Gemini Claude o3 Human\nFigure 2: Results of rule evaluations. For each model i...",
+          "worker_id": "SM-002-W1",
+          "summary": "Page 7 of the research paper presents results from rule evaluations across different AI models and humans on the ConceptARC tasks. The findings compare the accuracy of models like o3, Claude, and Gemini in both textual and visual modalities, with o3 achieving human-level or superior performance in textual tasks but lagging in visual tasks. The discussion highlights discrepancies in model performance, particularly noting the gap between o3-preview and the released version of o3. The results are visualized in bar charts (Figures 2 and 3) and supported by data in Appendix D.",
+          "entities": [
+            "o3",
+            "Claude",
+            "Gemini",
+            "o4-mini",
+            "ConceptARC",
+            "ARC-AGI-1",
+            "Chollet et al. (2025)",
+            "ARC-Prize (2025)",
+            "Kamradt (2025)",
+            "Python tools",
+            "human accuracy",
+            "textual inputs",
+            "visual modality"
+          ],
+          "keywords": [
+            "rule evaluations",
+            "ConceptARC tasks",
+            "textual inputs",
+            "visual modality",
+            "human accuracy",
+            "o3 model",
+            "Claude",
+            "Gemini",
+            "Python tools",
+            "correct-intended",
+            "correct-unintended",
+            "incorrect"
+          ],
+          "key_points": [
+            "o3 matches or surpasses human accuracy in textual ConceptARC tasks with medium reasoning effort.",
+            "Claude and Gemini have lower accuracy than humans in textual tasks.",
+            "o4-mini surpasses humans only when Python tools are enabled.",
+            "Models perform significantly worse than humans in visual tasks, even with Python tools.",
+            "There is a noted discrepancy between o3-preview and the released version of o3 on ARC-AGI-1."
+          ],
+          "technical_terms": [
+            "rule evaluations",
+            "textual inputs",
+            "visual modality",
+            "Python tools",
+            "correct-intended",
+            "correct-unintended",
+            "incorrect",
+            "ARC-AGI-1"
+          ],
+          "status": "success",
+          "processing_time": 3.0218191146850586
+        },
+        {
+          "page": 8,
+          "section": "Body",
+          "char_count": 2337,
+          "text_preview": "Preprint. Under Review\nModel Rule\nFind the value with the lowest density \n(actual positions / bounding box area), \nthen create an output grid with dimensions \nequal to that value's bounding box, filled \nentirely with that valueTraining Examples\nTest Iput\nGround TruthModel Output\nTraining Examples\nGr...",
+          "worker_id": "SM-002-W2",
+          "summary": "Page 8 discusses the limitations of AI models in capturing intended abstractions versus superficial shortcuts in rule generation. It presents examples of models (o3 and Claude Sonnet 4) that generate correct but unintended rules due to shallow inference or overfitting. The page highlights how models focus on surface-level features (e.g., pixel density, color frequency) rather than deeper conceptual relationships. The analysis shows that 57% of o3's rules, despite being correct, do not align with the intended abstractions of ConceptARC tasks.",
+          "entities": [
+            "o3",
+            "Claude Sonnet 4",
+            "ConceptARC",
+            "Python tools",
+            "Horizontal vs. Vertical concept group",
+            "Complete Shape concept group",
+            "Top vs. bottom 3D group"
+          ],
+          "keywords": [
+            "AI models",
+            "rule generation",
+            "shallow inference",
+            "overfitting",
+            "ConceptARC",
+            "abstractions",
+            "superficial shortcuts",
+            "density heuristic",
+            "bounding box",
+            "training examples"
+          ],
+          "key_points": [
+            "Models like o3 and Claude Sonnet 4 generate correct but unintended rules due to shallow inference.",
+            "o3's rules often overfit to training examples, missing deeper conceptual relationships.",
+            "Claude Sonnet 4 uses a density heuristic, which fails to capture intended abstractions in 3D tasks.",
+            "57% of o3's rules are correct but do not align with ConceptARC's intended abstractions."
+          ],
+          "technical_terms": [
+            "bounding box",
+            "density heuristic",
+            "overfitting",
+            "shallow inference",
+            "training examples",
+            "test input",
+            "ground truth",
+            "model output"
+          ],
+          "status": "success",
+          "processing_time": 3.0206210613250732
+        },
+        {
+          "page": 9,
+          "section": "Body",
+          "char_count": 4611,
+          "text_preview": "Preprint. Under Review\naccuracy) werecorrect and intended; that is, they captured the intended abstractions of the tasks.\nHowever, about 28% of o3’s generated rules werecorrect but unintended, meaning they were correct\nwith respect to the given demonstrations, and frequently generated correct output...",
+          "worker_id": "SM-002-W3",
+          "summary": "The page discusses the performance of AI models on the ConceptARC benchmark for abstract reasoning, comparing their ability to capture intended abstractions versus relying on superficial features. It highlights that while AI models like o3, Claude, and Gemini achieve high accuracy, they often miss intended abstractions, especially in visual modalities. The study evaluates the effects of task representation (textual vs. visual), reasoning effort, and Python tool use, finding that textual modalities with medium reasoning effort yield the best AI performance. The results suggest that accuracy alone may overestimate AI's abstract reasoning capabilities, emphasizing the need for robustness and generalizable mechanisms.",
+          "entities": [
+            "ConceptARC",
+            "ARC",
+            "o3",
+            "Claude",
+            "Gemini",
+            "Chollet (2019)",
+            "Frank (2023)",
+            "Ivanova (2025)",
+            "Rane et al. (2025)",
+            "ARC-Prize challenge"
+          ],
+          "keywords": [
+            "abstract reasoning",
+            "ConceptARC benchmark",
+            "textual vs. visual modalities",
+            "reasoning effort",
+            "Python tools",
+            "superficial features",
+            "intended abstractions",
+            "accuracy evaluation",
+            "multimodal reasoning",
+            "human-like reasoning",
+            "generalizable mechanisms"
+          ],
+          "key_points": [
+            "AI models often rely on superficial features (e.g., colors, numerical values) rather than intended abstractions.",
+            "Visual modalities significantly reduce output-grid and rule correctness compared to textual modalities.",
+            "Reasoning effort and Python tools improve performance, with reasoning effort aiding textual inputs and tools aiding visual inputs.",
+            "Accuracy alone may overestimate AI's abstract reasoning capabilities, especially in textual modalities.",
+            "AI models struggle with human-like visual reasoning, performing worse in visual tasks but better at generating correct rules."
+          ],
+          "technical_terms": [
+            "core knowledge priors",
+            "objectness",
+            "output-grid correctness",
+            "rule correctness",
+            "multimodal reasoning models",
+            "abstract-reasoning capabilities",
+            "generalizable mechanisms"
+          ],
+          "status": "success",
+          "processing_time": 3.509052276611328
+        },
+        {
+          "page": 10,
+          "section": "Body",
+          "char_count": 3260,
+          "text_preview": "Preprint. Under Review\n•We cannot be certain that the natural-language rules generated by the AI models we evaluated\nare faithful representations of the actual reasoning the models do to solve a task, though in\ngeneral the output grids generated seem to align with the rules. Further study is needed ...",
+          "worker_id": "SM-002-W4",
+          "summary": "The page discusses limitations and methodological considerations in evaluating AI models' natural-language rule generation for solving tasks. The study highlights uncertainties in the faithfulness of generated rules, resource constraints preventing high-effort reasoning settings, and subjective manual classification of rules. It also notes incomplete human-generated rule data and variations in accuracy metrics (pass@1 vs. pass@2/3). Ethical and reproducibility statements are provided, along with acknowledgments of funding sources.",
+          "entities": [
+            "ARC-Prize",
+            "ConceptARC",
+            "o3",
+            "Claude",
+            "Gemini",
+            "OpenAI",
+            "Moskvichev et al. (2023)",
+            "Chollet (2024)",
+            "BANYAN project",
+            "Sandia National Laboratories",
+            "Templeton World Charity Foundation",
+            "Kaleda K. Denton"
+          ],
+          "keywords": [
+            "natural-language rules",
+            "AI models",
+            "reasoning-token budgets",
+            "manual classification",
+            "pass@1 accuracy",
+            "ARC evaluations",
+            "human-generated rules",
+            "ethics statement",
+            "reproducibility statement",
+            "non-deterministic models"
+          ],
+          "key_points": [
+            "AI-generated rules may not faithfully represent actual reasoning; further study is needed.",
+            "High-effort reasoning settings and larger token budgets were not tested due to resource limitations.",
+            "Manual classification of rules involved subjectivity, mitigated by team consensus.",
+            "Pass@1 accuracy was used instead of pass@2/3 for consistency with ARC-Prize evaluations.",
+            "Human-generated rule data was incomplete, lacking rules for incorrect outputs."
+          ],
+          "technical_terms": [
+            "natural-language rules",
+            "reasoning-token budgets",
+            "pass@1 accuracy",
+            "ARC evaluations",
+            "non-deterministic models",
+            "Temperature 1",
+            "reasoning traces",
+            "Python calls"
+          ],
+          "status": "success",
+          "processing_time": 3.509300947189331
+        },
+        {
+          "page": 11,
+          "section": "Body",
+          "char_count": 3043,
+          "text_preview": "Preprint. Under Review\nREFERENCES\nARC-Prize. ARC-AGI benchmarking, 2024. https://github.com/arcprize/\narc-agi-benchmarking.\nARC-Prize. ARC-AGI leaderboard, 2025.https://arcprize.org/leaderboard.\nSusan Carey.The Origin of Concepts. MIT Press, Cambridge, MA, 2011.\nFrançois Chollet. On the measure of i...",
+          "worker_id": "SM-002-W1",
+          "summary": "Page 11 primarily contains references related to the Abstraction and Reasoning Corpus (ARC) and ARC-AGI benchmarking, focusing on evaluating AI reasoning and cognitive abilities. The references include technical reports, preprints, and datasets from authors like François Chollet, OpenAI, and others. Key findings highlight breakthroughs in AI reasoning, such as OpenAI's O3 model achieving high scores on ARC-AGI-Pub, and discussions on shortcut learning in large language models (LLMs). The page also references benchmarks like ConceptARC and H-ARC, which assess human-like reasoning and generalization in AI systems.",
+          "entities": [
+            "ARC-AGI benchmarking",
+            "ARC-AGI leaderboard",
+            "The Origin of Concepts",
+            "On the measure of intelligence",
+            "OpenAI O3",
+            "ARC-AGI-Pub",
+            "The Abstraction and Reasoning Corpus (ARC)",
+            "ARC Prize 2024: Technical Report",
+            "ARC-AGI-2",
+            "Shortcut learning of large language models",
+            "Bongard Problems",
+            "Baby steps in evaluating the capacities of large language models",
+            "Shortcut learning in deep neural networks",
+            "Emma: An enhanced multimodal reasoning benchmark",
+            "Fluid Concepts and Creative Analogies",
+            "The Analogical Mind",
+            "How to evaluate the cognitive abilities of LLMs",
+            "Analyzing o3 and o4-mini with ARC-AGI",
+            "Building machines that learn and think like people",
+            "H-ARC",
+            "The ConceptARC benchmark",
+            "Thinking With Images"
+          ],
+          "keywords": [
+            "ARC-AGI",
+            "AI reasoning",
+            "shortcut learning",
+            "large language models",
+            "cognitive abilities",
+            "benchmarking",
+            "generalization",
+            "analogical reasoning",
+            "multimodal reasoning",
+            "human-like reasoning"
+          ],
+          "key_points": [
+            "OpenAI's O3 model achieved a breakthrough high score on ARC-AGI-Pub.",
+            "ARC-AGI-2 introduces a new challenge for frontier AI reasoning systems.",
+            "Shortcut learning in LLMs is a significant challenge in natural language understanding.",
+            "ConceptARC and H-ARC benchmarks evaluate AI's ability to generalize and reason abstractly.",
+            "The ARC-AGI leaderboard tracks progress in AI reasoning capabilities."
+          ],
+          "technical_terms": [
+            "ARC-AGI benchmarking",
+            "shortcut learning",
+            "multimodal reasoning",
+            "analogical reasoning",
+            "generalization",
+            "H-ARC",
+            "ConceptARC",
+            "O3 model",
+            "ARC-AGI-2"
+          ],
+          "status": "success",
+          "processing_time": 4.589083909988403
+        }
+      ],
+      "total_pages": 5,
+      "total_chars": 15575,
+      "total_entities": 64,
+      "total_keywords": 53,
+      "llm_successes": 5,
+      "llm_failures": 0,
+      "aggregate_summary": "Page 7 of the research paper presents results from rule evaluations across different AI models and humans on the ConceptARC tasks. The findings compare the accuracy of models like o3, Claude, and Gemini in both textual and visual modalities, with o3 achieving human-level or superior performance in textual tasks but lagging in visual tasks. The discussion highlights discrepancies in model performance, particularly noting the gap between o3-preview and the released version of o3. The results are visualized in bar charts (Figures 2 and 3) and supported by data in Appendix D. ... The page discusse...",
+      "elapsed_time": 7.7357916831970215
+    }
+  },
+  "SM-003": {
+    "status": "ok",
+    "output": {
+      "sm_id": "SM-003",
+      "role": "Extract methods and detailed results from the second half of the Body",
+      "assigned_sections": [
+        "Body"
+      ],
+      "page_range": [
+        12,
+        16
+      ],
+      "num_workers": 4,
+      "results": [
+        {
+          "page": 12,
+          "section": "Body",
+          "char_count": 543,
+          "text_preview": "Preprint. Under Review\nSunayana Rane, Cyrus Kirkman, Amanda Royka, Graham Todd, Ryan Law, Jacob Gates Foster, and\nErica Cartmill. Principles of animal cognition for LLM evaluations: A case study on transitive\ninference. InProceedings of the International Conference on Machine Learning, ICML-2025,\n20...",
+          "worker_id": "SM-003-W1",
+          "summary": "Page 12 discusses the application of principles from animal cognition to evaluate large language models (LLMs), focusing on transitive inference as a case study. The methods involve comparing LLM performance on relational reasoning tasks with findings from animal cognition research. Results indicate that LLMs exhibit similar patterns to animals in transitive inference tasks, suggesting shared cognitive mechanisms. The page also references a dataset (RAVEN) for relational and analogical visual reasoning, highlighting its relevance to the study.",
+          "entities": [
+            "transitive inference",
+            "large language models (LLMs)",
+            "animal cognition",
+            "RAVEN dataset",
+            "relational reasoning",
+            "analogical visual reasoning",
+            "Sunayana Rane",
+            "Cyrus Kirkman",
+            "Amanda Royka",
+            "Graham Todd",
+            "Ryan Law",
+            "Jacob Gates Foster",
+            "Erica Cartmill",
+            "Chi Zhang",
+            "Feng Gao",
+            "Baoxiong Jia",
+            "Yixin Zhu",
+            "Song-Chun Zhu",
+            "International Conference on Machine Learning (ICML)",
+            "IEEE/CVF Conference on Computer Vision and Pattern Recognition"
+          ],
+          "keywords": [
+            "transitive inference",
+            "animal cognition",
+            "large language models",
+            "relational reasoning",
+            "analogical reasoning",
+            "RAVEN dataset",
+            "cognitive mechanisms",
+            "visual reasoning",
+            "ICML",
+            "CVPR"
+          ],
+          "key_points": [
+            "LLMs show similar patterns to animals in transitive inference tasks.",
+            "The study uses principles from animal cognition to evaluate LLMs.",
+            "RAVEN dataset is referenced for relational and analogical visual reasoning.",
+            "The research suggests shared cognitive mechanisms between LLMs and animals."
+          ],
+          "technical_terms": [
+            "transitive inference",
+            "relational reasoning",
+            "analogical reasoning",
+            "RAVEN dataset",
+            "large language models (LLMs)",
+            "cognitive mechanisms"
+          ],
+          "status": "success",
+          "processing_time": 3.6124958992004395
+        },
+        {
+          "page": 13,
+          "section": "Body",
+          "char_count": 1463,
+          "text_preview": "Preprint. Under Review\nA TEXTUALPROMPT\nFind the common rule that maps an input grid to an output grid, given the examples below.\nExample 1\nInput:\n0 0 0 0 0 0 0 0 0 0 0 0\n0 0 0 4 4 4 4 0 0 0 0 0\n0 0 0 4 4 4 4 0 0 0 0 0\n0 0 0 4 4 4 4 0 0 0 0 0\n0 0 0 0 0 0 0 0 0 0 0 0\n0 0 0 0 0 0 0 0 0 0 0 0\n2 2 2 2 2 ...",
+          "worker_id": "SM-003-W2",
+          "summary": "Page 13 presents a task involving grid transformation rules based on given examples. The main topic is identifying a common rule that maps an input grid to an output grid, with two variants (No Tools and Tools) for solving the task. The methods involve pattern recognition and rule extraction from provided examples. The results focus on predicting the output grid for a test input by applying the inferred rule, with the expectation of returning a minified JSON output.",
+          "entities": [
+            "Grid transformation",
+            "Pattern recognition",
+            "Rule extraction",
+            "JSON output"
+          ],
+          "keywords": [
+            "Grid transformation",
+            "Pattern recognition",
+            "Rule extraction",
+            "Input grid",
+            "Output grid",
+            "Test input",
+            "No Tools Variant",
+            "Tools Variant",
+            "JSON",
+            "Transformation rule"
+          ],
+          "key_points": [
+            "The task involves finding a common rule to map input grids to output grids.",
+            "Two variants (No Tools and Tools) are provided for solving the task.",
+            "The solution requires predicting the output grid for a given test input.",
+            "The final answer must be returned in a minified JSON format."
+          ],
+          "technical_terms": [
+            "Grid transformation",
+            "Pattern recognition",
+            "Rule extraction",
+            "JSON output"
+          ],
+          "status": "success",
+          "processing_time": 4.499191999435425
+        },
+        {
+          "page": 14,
+          "section": "Body",
+          "char_count": 1200,
+          "text_preview": "Preprint. Under Review\nB VISUALPROMPT\nThe left side of the first image shows 3 grids, where each grid square is colored with one of\n10 possible colors: black, blue, red, green, yellow, gray, magenta, orange, cyan or brown. The\nright side of the first image also contains 3 grids, each of which is a t...",
+          "worker_id": "SM-003-W3",
+          "summary": "The page describes a visual prompt task where participants must identify a transformation rule applied to grids of colored squares and then apply that rule to a new grid. Two variants are presented: a 'No Tools Variant' where participants must solve the task without external tools or code, and a 'Tools Variant' where Python can be used. The task involves analyzing 3 pairs of grids to deduce a single transformation rule, then applying it to a test grid. The output is expected in a minified JSON format with the rule and the transformed grid described using indices.",
+          "entities": [
+            "Python"
+          ],
+          "keywords": [
+            "visual prompt",
+            "transformation rule",
+            "grid transformation",
+            "colored squares",
+            "No Tools Variant",
+            "Tools Variant",
+            "JSON output",
+            "indices",
+            "training examples",
+            "test grid"
+          ],
+          "key_points": [
+            "The task involves identifying a transformation rule from 3 pairs of grids.",
+            "Participants must apply the rule to a new grid in the second image.",
+            "Two variants are provided: one without tools and one allowing Python usage.",
+            "The output must be in a minified JSON format with the rule and transformed grid."
+          ],
+          "technical_terms": [
+            "transformation rule",
+            "grid transformation",
+            "indices",
+            "JSON output",
+            "Python"
+          ],
+          "status": "success",
+          "processing_time": 1.9812350273132324
+        },
+        {
+          "page": 15,
+          "section": "Body",
+          "char_count": 1837,
+          "text_preview": "Preprint. Under Review\nC PROMPTS FORNON-REASONING MODELS\nThe prompts we used for non-Reasoning models were minimally modified to require an additional\nfield containing a reasoning trace in the final JSON object. Otherwise, the prompts were consistent\nwith those used for reasoning models, including v...",
+          "worker_id": "SM-003-W4",
+          "summary": "This page discusses the evaluation of rule generation by different models (o3, Claude Sonnet 4, Gemini 2.5 Pro) and humans, focusing on the correctness and modality (textual vs. visual) of the output grids. The methods involved minimally modified prompts for non-reasoning models to include a reasoning trace field. Results are presented in Table 2, showing the percentage of tasks classified into Correct-Intended, Correct-Unintended, and Incorrect rules, partitioned by modality and grid correctness. Human performance is also compared, with estimates for incorrect grids based on reported grid accuracy.",
+          "entities": [
+            "o3",
+            "Claude Sonnet 4",
+            "Gemini 2.5 Pro",
+            "JSON",
+            "Figure 2",
+            "Table 2",
+            "Textual",
+            "Visual",
+            "Correct Grid",
+            "Incorrect Grid",
+            "Correct-Intended",
+            "Correct-Unintended",
+            "Incorrect",
+            "Not Classified"
+          ],
+          "keywords": [
+            "rule generation",
+            "non-reasoning models",
+            "reasoning trace",
+            "modality",
+            "grid correctness",
+            "task classification",
+            "human performance",
+            "model evaluation",
+            "prompt modification",
+            "output grid"
+          ],
+          "key_points": [
+            "Prompts for non-reasoning models were modified to include a reasoning trace field.",
+            "Table 2 presents the percentage of tasks classified into rule categories for different models and humans.",
+            "Human performance is estimated for incorrect grids based on reported grid accuracy.",
+            "Models and humans are evaluated on textual and visual modalities.",
+            "The results show variations in rule correctness across models and humans."
+          ],
+          "technical_terms": [
+            "JSON object",
+            "rule classification",
+            "modality partitioning",
+            "grid accuracy",
+            "task partitioning",
+            "prompt variations",
+            "visual settings",
+            "tool-enabled settings"
+          ],
+          "status": "success",
+          "processing_time": 3.0873847007751465
+        },
+        {
+          "page": 16,
+          "section": "Body",
+          "char_count": 2897,
+          "text_preview": "Preprint. Under Review\nTable 3: Data used to create Figure 3. For all o3 settings, each cell reports the percentage of tasks in\na rule classification (Correct-Intended, Correct-Unintended, Incorrect), partitioned by the modality\n(Textual vs. Visual) and by the correctness of the output grid (Correct...",
+          "worker_id": "SM-003-W1",
+          "summary": "Page 16 of the research paper analyzes the performance of reasoning and non-reasoning models on the ConceptARC benchmark. The methods include evaluating models under different settings (low effort, medium effort, with/without tools) and modalities (textual vs. visual). Key findings include the dramatic lower accuracy of non-reasoning models compared to reasoning models, with some models failing to generate valid outputs in the visual modality. The page also presents per-concept-group accuracies for reasoning models and compares them to human performance.",
+          "entities": [
+            "ConceptARC",
+            "GPT-4o",
+            "Llama 4 Scout",
+            "Qwen 2.5 VL 72B",
+            "Python tools",
+            "Moskvichev et al. (2023)",
+            "pass@1",
+            "temperature",
+            "JSON format"
+          ],
+          "keywords": [
+            "ConceptARC",
+            "non-reasoning models",
+            "output grid accuracy",
+            "textual modality",
+            "visual modality",
+            "Python tools",
+            "reasoning models",
+            "per-concept-group accuracies",
+            "human performance",
+            "temperature setting",
+            "JSON format"
+          ],
+          "key_points": [
+            "Non-reasoning models (GPT-4o, Llama 4 Scout, Qwen 2.5 VL 72B) show significantly lower accuracy than reasoning models.",
+            "GPT-4o often generates incorrect output grids in both modalities.",
+            "Qwen 2.5 VL 72B and Llama 4 Scout struggle to generate valid answers in the visual modality.",
+            "Reasoning models' performance is evaluated across different effort levels and modalities.",
+            "Per-concept-group accuracies for reasoning models are compared to human performance."
+          ],
+          "technical_terms": [
+            "pass@1",
+            "temperature",
+            "JSON format",
+            "output grid accuracy",
+            "textual modality",
+            "visual modality",
+            "Python tools",
+            "reasoning models",
+            "non-reasoning models"
+          ],
+          "status": "success",
+          "processing_time": 3.0069210529327393
+        }
+      ],
+      "total_pages": 5,
+      "total_chars": 7940,
+      "total_entities": 48,
+      "total_keywords": 51,
+      "llm_successes": 5,
+      "llm_failures": 0,
+      "aggregate_summary": "Page 12 discusses the application of principles from animal cognition to evaluate large language models (LLMs), focusing on transitive inference as a case study. The methods involve comparing LLM performance on relational reasoning tasks with findings from animal cognition research. Results indicate that LLMs exhibit similar patterns to animals in transitive inference tasks, suggesting shared cognitive mechanisms. The page also references a dataset (RAVEN) for relational and analogical visual reasoning, highlighting its relevance to the study. ... The page describes a visual prompt task where ...",
+      "elapsed_time": 6.685221195220947
+    }
+  },
+  "SM-004": {
+    "status": "ok",
+    "output": {
+      "sm_id": "SM-004",
+      "role": "Summarize the Conclusion section for final insights",
+      "assigned_sections": [
+        "Conclusion"
+      ],
+      "page_range": [
+        17,
+        21
+      ],
+      "num_workers": 4,
+      "results": [
+        {
+          "page": 17,
+          "section": "Conclusion",
+          "char_count": 1991,
+          "text_preview": "Preprint. Under Review\nF.1 CONCEPTPERFORMANCECOMPARISON FORTEXTUALMODALITY\nTable 5:Concept performance (Textual):Per-concept accuracy (%) on Concept-ARC for medium\neffort + tools. Best value per concept in bold.\nConcept Gemini 2.5\nProo3 o4-mini Claude\nSonnet 4Human\nAboveBelow 609083.3 63.3 69\nCenter...",
+          "worker_id": "SM-004-W1",
+          "summary": "Page 17 of the research paper presents a comparative analysis of concept performance across textual and visual modalities using the Concept-ARC dataset. It includes two tables (Table 5 and Table 6) that detail per-concept accuracy percentages for different models (Gemini, Proo3, Claude, Sonnet) and human participants. The findings highlight significant performance differences between textual and visual tasks, with notable trends in concepts like 'Count' and 'CleanUp'. The analysis also evaluates concept difficulty but finds no strong correlation between visual or textual modality difficulty or human performance.",
+          "entities": [
+            "Concept-ARC",
+            "Gemini",
+            "Proo3",
+            "Claude",
+            "Sonnet",
+            "Human participants",
+            "Table 5",
+            "Table 6",
+            "Accuracy (%)"
+          ],
+          "keywords": [
+            "Concept performance",
+            "Textual modality",
+            "Visual modality",
+            "Accuracy comparison",
+            "Concept-ARC",
+            "Gemini",
+            "Claude",
+            "Human participants",
+            "Count tasks",
+            "CleanUp tasks",
+            "Concept difficulty"
+          ],
+          "key_points": [
+            "Textual modality tasks generally show higher accuracy than visual modality tasks.",
+            "Human participants outperformed models in several visual tasks.",
+            "Concepts like 'Count' and 'CleanUp' exhibit notable performance differences.",
+            "No significant correlation was found between concept difficulty in visual or textual modalities or human performance."
+          ],
+          "technical_terms": [
+            "Per-concept accuracy",
+            "Concept-ARC",
+            "Medium effort + tools",
+            "Textual modality",
+            "Visual modality"
+          ],
+          "status": "success",
+          "processing_time": 2.5191969871520996
+        },
+        {
+          "page": 18,
+          "section": "Conclusion",
+          "char_count": 1367,
+          "text_preview": "Preprint. Under Review\ncharacteristics (e.g shapes, colors, corners). Correspondingly, output grids are often small and easy\nto generate. In the visual modality, this is the performance closest to humans for both o3 (-6.7%)\nand Gemini (-44%), and in the textual modality, this concept also results in...",
+          "worker_id": "SM-004-W2",
+          "summary": "The conclusion section on page 18 discusses the performance gaps between human participants and AI models (o3, Gemini, Claude) in generating output grids across different concept groups. Models excel in simpler tasks like Count, where they achieve near-human performance, but struggle significantly with complex tasks like CleanUp, especially in both visual and textual modalities. The analysis highlights that models perform poorly when generating larger or more intricate output grids, indicating a limitation in their ability to handle complex reasoning. The section also presents Figure 5, which compares model performance across different concepts, emphasizing the disparity between human and AI capabilities.",
+          "entities": [
+            "o3",
+            "Gemini",
+            "Claude",
+            "CleanUp",
+            "Count",
+            "Train1",
+            "Train2",
+            "Train7",
+            "Figure 5"
+          ],
+          "keywords": [
+            "output grids",
+            "performance gap",
+            "visual modality",
+            "textual modality",
+            "complex reasoning",
+            "model accuracy",
+            "human performance",
+            "concept groups",
+            "CleanUp tasks",
+            "Count tasks"
+          ],
+          "key_points": [
+            "Models perform well on simple tasks (e.g., Count) but struggle with complex tasks (e.g., CleanUp).",
+            "The largest performance gaps occur in CleanUp tasks, where models underperform significantly compared to humans.",
+            "Models have difficulty generating larger or more intricate output grids.",
+            "Figure 5 illustrates the disparity in performance between humans and models across different concepts."
+          ],
+          "technical_terms": [
+            "output grids",
+            "visual modality",
+            "textual modality",
+            "performance gap",
+            "concept groups",
+            "CleanUp tasks",
+            "Count tasks",
+            "model accuracy"
+          ],
+          "status": "success",
+          "processing_time": 2.881227970123291
+        },
+        {
+          "page": 19,
+          "section": "Conclusion",
+          "char_count": 1558,
+          "text_preview": "Preprint. Under Review\nG CORRECT-INTENDEDCOVERAGE\nTable 7:Correct-intended task coverage:Number of tasks covered correctly by category and\nmodality, with coverage rates listed as a percentage of the 480 total ConceptARC tasks. Here, a\ntask is considered \"covered\" if the model in question produced a ...",
+          "worker_id": "SM-004-W3",
+          "summary": "Page 19 of the Conclusion section presents Table 7, which evaluates the correct-intended task coverage of three reasoning models (Claude, Gemini, and an unnamed third model) across textual and visual modalities, compared to human performance. The table shows that while individual models perform decently in textual tasks, pooling their answers only slightly improves coverage (+8%). Visual modality coverage is notably lower, but pooling models yields a similar improvement. Humans demonstrate superior abstractive reasoning, failing only 5 out of 480 tasks. The section highlights the limitations of current models compared to human performance and suggests future work to bridge this gap.",
+          "entities": [
+            "Claude",
+            "Gemini",
+            "ConceptARC",
+            "Textual modality",
+            "Visual modality",
+            "Correct-intended rule",
+            "Human subjects",
+            "Abstract transformation"
+          ],
+          "keywords": [
+            "Correct-intended task coverage",
+            "Textual modality",
+            "Visual modality",
+            "Model pooling",
+            "Human performance",
+            "Abstractive reasoning",
+            "Task coverage rate",
+            "Reasoning models",
+            "ConceptARC tasks",
+            "Abstract transformation"
+          ],
+          "key_points": [
+            "Models show decent coverage in textual tasks but limited improvement when pooled.",
+            "Visual modality coverage is lower, but pooling models improves it comparably.",
+            "Humans outperform models, failing only 5 tasks out of 480.",
+            "Pooling models yields a moderate increase in coverage (+8%) over the best single model.",
+            "Human abstractive reasoning is significantly stronger than current models."
+          ],
+          "technical_terms": [
+            "Correct-intended rule",
+            "Task coverage rate",
+            "Abstract transformation",
+            "Modality (textual/visual)",
+            "Model pooling"
+          ],
+          "status": "success",
+          "processing_time": 3.023437023162842
+        },
+        {
+          "page": 20,
+          "section": "Conclusion",
+          "char_count": 2943,
+          "text_preview": "Preprint. Under Review\nH ERROR-TYPEOVERVIEW\nTextual Visual Textual Visual Textual Visual Textual Visual\nlow effort medium  effort medium  effort +tools low effort +tools\nmismatc h\nformatting  error\nuneven  row  length s\nFigure 6: Overview of different error types for o3 in different experimental set...",
+          "worker_id": "SM-004-W4",
+          "summary": "The conclusion section discusses error types and output grid accuracies in different experimental settings for models generating answer grids. The most common error was a mismatch between the output and ground-truth grids, including formatting issues and uneven row lengths. The study re-assessed accuracies by allowing alternate grid formats, finding minor increases in most cases, with some models showing significant improvements. The analysis concludes that accepting alternate formats does not substantially alter overall results, though natural-language descriptions of grids were deemed invalid. The study highlights the robustness of the evaluation method despite minor formatting variations.",
+          "entities": [
+            "ARC-Prize evaluation method",
+            "Table 4",
+            "Table 1",
+            "Table 8",
+            "Figure 6",
+            "Figure 7",
+            "Figure 2",
+            "o3",
+            "o4-mini low-effort",
+            "o4-mini low-effort + tools",
+            "Claude Sonnet 4 medium-effort",
+            "Appendix A",
+            "Appendix B",
+            "Appendix I"
+          ],
+          "keywords": [
+            "error types",
+            "output grid accuracies",
+            "mismatch error",
+            "formatting error",
+            "uneven row lengths",
+            "ARC-Prize evaluation method",
+            "ground-truth grid",
+            "alternate grid formats",
+            "natural-language description",
+            "correct-intended",
+            "correct-unintended",
+            "incorrect rules"
+          ],
+          "key_points": [
+            "The most common error type was a mismatch between output and ground-truth grids.",
+            "Formatting errors, such as incorrect separators or brackets, were noted.",
+            "Re-assessing accuracies with alternate formats led to minor increases in most cases.",
+            "Some models showed significant accuracy improvements when alternate formats were allowed.",
+            "Natural-language descriptions of grids were not considered valid answers.",
+            "Accepting alternate formats did not substantially alter overall results."
+          ],
+          "technical_terms": [
+            "mismatch error",
+            "formatting error",
+            "uneven row lengths",
+            "output grid accuracies",
+            "ground-truth grid",
+            "ARC-Prize evaluation method",
+            "alternate grid formats",
+            "natural-language description",
+            "correct-intended",
+            "correct-unintended",
+            "incorrect rules"
+          ],
+          "status": "success",
+          "processing_time": 3.581321954727173
+        },
+        {
+          "page": 21,
+          "section": "Conclusion",
+          "char_count": 1373,
+          "text_preview": "Preprint. Under Review\nTable 8:Output grid accuracies with alternative grid formats included.For each model and\nsetting, we giveoriginal accuracy/re-assessed accuracy. Original accuracies are from Table 4 and\nTable 1.\nModel Setting Textual Visual\nOriginal / Re-assessed Original / Re-assessed\no3 low ...",
+          "worker_id": "SM-004-W1",
+          "summary": "Page 21 of the Conclusion section presents a re-assessment of model accuracies across different settings, comparing original and re-assessed performance for both textual and visual tasks. The table (Table 8) summarizes accuracy metrics for various models, including o3, o4-mini, Claude Sonnet 4, Gemini 2.5 Pro, GPT-4o, Llama 4 Scout, and Qwen 2.5 VL 72B, under different effort levels and tool usage. The results highlight variations in performance, particularly noting improvements in some models (e.g., o4-mini) and consistent performance in others (e.g., o3 medium effort). Figure 7 visually represents the re-assessed rule evaluations, emphasizing the comparison between models and human performance.",
+          "entities": [
+            "o3",
+            "o4-mini",
+            "Claude Sonnet 4",
+            "Gemini 2.5 Pro",
+            "GPT-4o",
+            "Llama 4 Scout",
+            "Qwen 2.5 VL 72B",
+            "Table 8",
+            "Figure 7",
+            "accuracy",
+            "textual tasks",
+            "visual tasks",
+            "low effort",
+            "medium effort",
+            "tools"
+          ],
+          "keywords": [
+            "re-assessed accuracy",
+            "textual accuracy",
+            "visual accuracy",
+            "model performance",
+            "effort levels",
+            "tool usage",
+            "rule evaluations",
+            "human performance",
+            "grid formats",
+            "comparative analysis"
+          ],
+          "key_points": [
+            "Re-assessed accuracies are compared to original accuracies for multiple models across textual and visual tasks.",
+            "Some models show significant improvements (e.g., o4-mini), while others remain consistent (e.g., o3 medium effort).",
+            "Tool usage generally improves performance, particularly in visual tasks.",
+            "Figure 7 visually represents the re-assessed rule evaluations, highlighting model vs. human performance."
+          ],
+          "technical_terms": [
+            "re-assessed accuracy",
+            "textual tasks",
+            "visual tasks",
+            "effort levels",
+            "tool usage",
+            "rule evaluations",
+            "grid formats",
+            "comparative analysis"
+          ],
+          "status": "success",
+          "processing_time": 3.835211992263794
+        }
+      ],
+      "total_pages": 5,
+      "total_chars": 9232,
+      "total_entities": 55,
+      "total_keywords": 53,
+      "llm_successes": 5,
+      "llm_failures": 0,
+      "aggregate_summary": "Page 17 of the research paper presents a comparative analysis of concept performance across textual and visual modalities using the Concept-ARC dataset. It includes two tables (Table 5 and Table 6) that detail per-concept accuracy percentages for different models (Gemini, Proo3, Claude, Sonnet) and human participants. The findings highlight significant performance differences between textual and visual tasks, with notable trends in concepts like 'Count' and 'CleanUp'. The analysis also evaluates concept difficulty but finds no strong correlation between visual or textual modality difficulty or...",
+      "elapsed_time": 6.455012798309326
+    }
+  }
+}

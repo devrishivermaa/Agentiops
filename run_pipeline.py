@@ -34,11 +34,12 @@ def run_complete_pipeline(pdf_path: str, config: dict = None):
             "brief_info": "Research paper analysis",
             "complexity_level": "high",
             "priority": "high",
-            "preferred_model": "gemini-2.0-flash-exp",
-            "max_parallel_submasters": 2,
-            "num_workers_per_submaster": 3,
+            "preferred_model": "mistral-small-latest",  # Updated
+            "max_parallel_submasters": 3,  # Can increase with Mistral's better limits
+            "num_workers_per_submaster": 4,
             "feedback_required": True
         }
+
     
     # STEP 1: MAPPER - Generate metadata
     print("\n" + "=" * 80)
