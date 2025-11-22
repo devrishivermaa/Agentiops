@@ -10,7 +10,10 @@ import re
 from typing import Dict, Any
 from dotenv import load_dotenv
 from utils.logger import get_logger
-from utils.llm_helper import LLMProcessor  # ADDED: Use our rate-limited processor
+from utils.llm_helper import LLMProcessor 
+from pymongo import MongoClient
+import time
+
 
 load_dotenv()
 logger = get_logger("MasterAgent")
@@ -24,13 +27,39 @@ class MasterAgent:
         
         model = model or "gemini-2.0-flash-exp"
         
-        # FIXED: Use LLMProcessor instead of direct LangChain call
+       
         self.llm = LLMProcessor(
             model=model,
             temperature=temperature,
             max_retries=3,
             caller_id=self.id
         )
+        
+    
+        self.mongo_client = None
+        self.mongo_db = None
+        self.mongo_coll = None
+        self.mongo_metadata_coll = None  
+
+        try:
+            uri = os.getenv("MONGO_URI")
+            db_name = os.getenv("MONGO_DB")
+            coll_name = os.getenv("MONGO_MASTER_COLLECTION", "master_agent")
+            metadata_coll_name = os.getenv("MONGO_METADATA_COLLECTION", "metadata")
+
+            if uri:
+                self.mongo_client = MongoClient(uri)
+                self.mongo_db = self.mongo_client[db_name]
+                self.mongo_coll = self.mongo_db[coll_name]
+                self.mongo_metadata_coll = self.mongo_db[metadata_coll_name]
+                
+                self.logger.info(f"[INIT] Connected to MongoDB collection {db_name}.{coll_name}")
+                self.logger.info(f"[INIT] Connected extra metadata collection {db_name}.{metadata_coll_name}")
+            else:
+                self.logger.warning("[INIT] MONGO_URI is missing. MongoDB disabled.")
+
+        except Exception as e:
+            self.logger.error(f"[INIT] Failed to connect MongoDB: {e}")
         
         self.logger.info(f"[INIT] Master Agent {self.id} initialized with model {model}.")
     
@@ -112,7 +141,7 @@ Respond ONLY in valid JSON:
       "submaster_id": "SM-001",
       "role": "Summarize Abstract and Introduction sections for overview",
       "assigned_sections": ["Abstract", "Introduction"],
-      "page_range":,[1][2]
+      "page_range": [1, 2],
       "estimated_workload": "medium"
     }}
   ]
@@ -265,43 +294,96 @@ Revise the plan accordingly. Keep the same JSON structure.
         print("\n⚠️ Max attempts reached without approval.")
         return None
     
+    def save_plan_to_mongo(self, plan: dict, metadata: dict):
+        """Save plan to MongoDB."""
+        if not self.mongo_coll:
+            self.logger.warning("MongoDB not configured. Cannot save plan.")
+            return
+
+        try:
+            doc = {
+                "master_id": self.id,
+                "timestamp": time.time(),
+                "plan": plan,
+                "metadata": metadata
+            }
+            self.mongo_coll.insert_one(doc)
+            self.logger.info("[MONGO] Plan saved to MongoDB")
+        except Exception as e:
+            self.logger.error(f"[MONGO] Failed to save plan: {e}")
+    
+    def save_metadata_to_mongo(self, metadata: dict):
+        """Save metadata to MongoDB."""
+        if self.mongo_metadata_coll is None:
+            self.logger.warning("MongoDB metadata collection not configured. Skipping save.")
+            return
+
+        try:
+            doc = {
+                "master_id": self.id,
+                "timestamp": time.time(),
+                "metadata": metadata
+            }
+            self.mongo_metadata_coll.insert_one(doc)
+            self.logger.info("[MONGO] Metadata saved to MongoDB")
+        except Exception as e:
+            self.logger.error(f"[MONGO] Failed to save metadata: {e}")
+    
     def execute(self, metadata_path: str, save_path: str = None):
         """Run orchestration and save final plan."""
         try:
             with open(metadata_path, "r", encoding="utf-8") as f:
                 metadata = json.load(f)
+                self.save_metadata_to_mongo(metadata)
         except Exception as e:
             self.logger.error(f"Failed to load metadata: {e}")
             return None
-        
+
         self.logger.info(f"[EXEC] Processing: {metadata.get('file_name')}")
         plan = self.feedback_loop(metadata)
-        
+
         if plan is None or plan.get("status") not in ["approved", "quota_exceeded"]:
             return plan
-        
+
         if plan.get("status") == "quota_exceeded":
             return plan
-        
-        # Save plan
+
+        # Determine save path
         if save_path is None:
             save_path = os.path.join(os.path.dirname(metadata_path), "submasters_plan.json")
-        
+
+        # Save plan to local JSON
         try:
             with open(save_path, "w", encoding="utf-8") as f:
                 json.dump(plan, f, indent=2)
             self.logger.info(f"Final plan saved: {save_path}")
         except Exception as e:
-            self.logger.error(f"Failed to save plan: {e}")
+            self.logger.error(f"Failed to save plan locally: {e}")
             return None
-        
+
+        # Save plan to MongoDB
+        try:
+            self.save_plan_to_mongo(plan, metadata)
+        except Exception as e:
+            self.logger.error(f"Failed to save plan to MongoDB: {e}")
+
         print("\n✅ Final Approved Plan:")
         print(json.dumps(plan, indent=2))
         print(f"\n📁 Plan saved: {save_path}")
+
         return plan
 
 
 if __name__ == "__main__":
+    import sys
+    
     agent = MasterAgent()
     print("\n--- MASTER AGENT ONLINE ---\n")
-    agent.execute("metadata.json")
+    
+    # Parse command-line argument
+    if len(sys.argv) < 2:
+        print("Usage: python -m agents.master_agent <metadata_file_path>")
+        sys.exit(1)
+    
+    metadata_path = sys.argv[1]
+    agent.execute(metadata_path)
