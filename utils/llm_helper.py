@@ -1,7 +1,5 @@
-# utils/llm_helper.py
 """
-LLM Helper with ULTRA-AGGRESSIVE rate limiting for Gemini free tier.
-Ensures we NEVER exceed 10 RPM and 50 requests/day.
+LLM Helper with Mistral AI direct SDK and rate limiting.
 """
 
 import os
@@ -10,8 +8,7 @@ import json
 import threading
 from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.schema import HumanMessage
+from mistralai import Mistral
 from utils.logger import get_logger
 
 load_dotenv()
@@ -20,58 +17,55 @@ logger = get_logger("LLMHelper")
 
 class GlobalRateLimiter:
     """
-    Ultra-aggressive global rate limiter for Gemini free tier.
-    Ensures NEVER exceeding 10 RPM or 50 requests/day.
+    Global rate limiter for Mistral AI API.
+    Adjust limits based on your Mistral tier.
     """
     
-    def __init__(self, max_requests_per_minute: int = 8, max_requests_per_day: int = 45):
+    def __init__(self, max_requests_per_minute: int = 50, max_requests_per_day: int = 5000):
         """
-        Initialize rate limiter with conservative limits.
+        Initialize rate limiter.
         
         Args:
-            max_requests_per_minute: Max requests per minute (default: 8, limit is 10)
-            max_requests_per_day: Max requests per day (default: 45, limit is 50)
+            max_requests_per_minute: Max requests per minute (default: 50)
+            max_requests_per_day: Max requests per day (default: 5000)
         """
         self.max_requests_per_minute = max_requests_per_minute
         self.max_requests_per_day = max_requests_per_day
         
-        self.request_times_minute: List[float] = []  # Track last minute
-        self.request_times_day: List[float] = []  # Track last 24 hours
+        self.request_times_minute: List[float] = []
+        self.request_times_day: List[float] = []
         
         self.lock = threading.Lock()
-        self.min_delay_between_requests = 8.0  # Minimum 8 seconds between ANY requests
+        self.min_delay_between_requests = 1.2  # ~50 RPM
         self.last_request_time = 0.0
         
         logger.info(
             f"GlobalRateLimiter initialized: {max_requests_per_minute} RPM, "
-            f"{max_requests_per_day} requests/day (ULTRA-CONSERVATIVE)"
+            f"{max_requests_per_day} requests/day (Mistral AI)"
         )
     
     def wait_if_needed(self, caller_id: str = "unknown"):
-        """
-        Block if rate limit would be exceeded.
-        Enforces BOTH per-minute AND per-day limits.
-        """
+        """Block if rate limit would be exceeded."""
         with self.lock:
             now = time.time()
             
-            # RULE 1: Enforce absolute minimum delay between ANY requests
+            # RULE 1: Enforce minimum delay
             time_since_last = now - self.last_request_time
             if self.last_request_time > 0 and time_since_last < self.min_delay_between_requests:
                 wait_time = self.min_delay_between_requests - time_since_last
-                logger.warning(
+                logger.debug(
                     f"[{caller_id}] Enforcing {self.min_delay_between_requests}s minimum delay. "
                     f"Waiting {wait_time:.1f}s"
                 )
                 time.sleep(wait_time)
                 now = time.time()
             
-            # RULE 2: Check per-minute limit (last 60 seconds)
+            # RULE 2: Check per-minute limit
             self.request_times_minute = [t for t in self.request_times_minute if now - t < 60]
             
             if len(self.request_times_minute) >= self.max_requests_per_minute:
                 oldest_request = self.request_times_minute[0]
-                wait_time = 60 - (now - oldest_request) + 2  # +2s safety buffer
+                wait_time = 60 - (now - oldest_request) + 2
                 
                 if wait_time > 0:
                     logger.warning(
@@ -83,12 +77,12 @@ class GlobalRateLimiter:
                     now = time.time()
                     self.request_times_minute = [t for t in self.request_times_minute if now - t < 60]
             
-            # RULE 3: Check per-day limit (last 24 hours)
+            # RULE 3: Check per-day limit
             self.request_times_day = [t for t in self.request_times_day if now - t < 86400]
             
             if len(self.request_times_day) >= self.max_requests_per_day:
                 oldest_request_day = self.request_times_day[0]
-                wait_time = 86400 - (now - oldest_request_day) + 60  # +1min safety buffer
+                wait_time = 86400 - (now - oldest_request_day) + 60
                 
                 logger.error(
                     f"[{caller_id}] DAILY QUOTA REACHED! "
@@ -96,10 +90,9 @@ class GlobalRateLimiter:
                     f"Must wait {wait_time/3600:.1f} hours"
                 )
                 
-                # Don't actually wait 24 hours, just raise an error
                 raise RuntimeError(
                     f"Daily quota exceeded ({len(self.request_times_day)}/{self.max_requests_per_day}). "
-                    f"Please wait {wait_time/3600:.1f} hours or upgrade to paid tier."
+                    f"Please wait {wait_time/3600:.1f} hours."
                 )
             
             # Record this request
@@ -128,37 +121,40 @@ class GlobalRateLimiter:
         }
 
 
-# Global rate limiter instance (ULTRA-CONSERVATIVE: 8 RPM, 45/day)
+# Global rate limiter instance
 _global_rate_limiter = GlobalRateLimiter(
-    max_requests_per_minute=8,  # Conservative: 8 RPM (limit is 10)
-    max_requests_per_day=45     # Conservative: 45/day (limit is 50)
+    max_requests_per_minute=50,
+    max_requests_per_day=5000
 )
 
 
 class LLMProcessor:
     """
-    LLM wrapper with retry logic and global rate limiting.
+    LLM wrapper with Mistral AI SDK and retry logic.
     """
     
     def __init__(
         self,
-        model: str = "gemini-2.0-flash-exp",
+        model: str = "mistral-small-latest",
         temperature: float = 0.3,
         max_retries: int = 5,
         caller_id: str = "unknown"
     ):
         """
-        Initialize LLM processor.
+        Initialize LLM processor with Mistral AI.
         
         Args:
-            model: Gemini model name
+            model: Mistral model name (e.g., "mistral-small-latest", "mistral-large-latest")
             temperature: Sampling temperature (0.0-1.0)
             max_retries: Max retry attempts on failure
-            caller_id: Identifier for logging (e.g., SubMaster ID or Worker ID)
+            caller_id: Identifier for logging
         """
-        api_key = os.getenv("GOOGLE_API_KEY")
+        api_key = os.getenv("MISTRAL_API_KEY")
         if not api_key:
-            raise ValueError("GOOGLE_API_KEY not found in environment")
+            raise ValueError(
+                "MISTRAL_API_KEY not found in environment variables. "
+                "Add it to your .env file."
+            )
         
         self.model = model
         self.temperature = temperature
@@ -166,23 +162,21 @@ class LLMProcessor:
         self.caller_id = caller_id
         
         try:
-            self.llm = ChatGoogleGenerativeAI(
-                model=model,
-                temperature=temperature,
-                google_api_key=api_key
-            )
-            logger.info(f"[{caller_id}] LLM initialized: {model} (temp={temperature})")
+            # Initialize Mistral client (no context manager needed for long-lived usage)
+            self.client = Mistral(api_key=api_key)
+            logger.info(f"[{caller_id}] Mistral AI client initialized: {model} (temp={temperature})")
         except Exception as e:
-            logger.error(f"[{caller_id}] Failed to initialize LLM: {e}")
+            logger.error(f"[{caller_id}] Failed to initialize Mistral client: {e}")
             raise
     
-    def call_with_retry(self, prompt: str, parse_json: bool = False) -> Any:
+    def call_with_retry(self, prompt: str, parse_json: bool = False, max_tokens: int = 2048) -> Any:
         """
-        Call LLM with retry logic and global rate limiting.
+        Call Mistral AI with retry logic and global rate limiting.
         
         Args:
             prompt: Text prompt to send
             parse_json: If True, parse response as JSON
+            max_tokens: Maximum tokens in response
             
         Returns:
             LLM response text or parsed JSON
@@ -199,11 +193,21 @@ class LLMProcessor:
                     logger.error(f"[{self.caller_id}] Daily quota exceeded: {e}")
                     raise
                 
-                # Make API call
-                response = self.llm.invoke([HumanMessage(content=prompt)])
+                # Make API call using Mistral SDK
+                response = self.client.chat.complete(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    temperature=self.temperature,
+                    max_tokens=max_tokens
+                )
                 
                 # Extract content
-                content = self._extract_content(response)
+                content = response.choices[0].message.content
                 
                 if not content:
                     raise ValueError("Empty response from LLM")
@@ -223,13 +227,12 @@ class LLMProcessor:
                 last_error = e
                 error_str = str(e).lower()
                 
-                # Check if it's a quota error
-                if "429" in str(e) or "quota" in error_str or "resource exhausted" in error_str:
-                    # Exponential backoff with MUCH longer waits for quota errors
-                    wait_time = min(120, (2 ** attempt) * 20)  # 20s, 40s, 80s, 120s, 120s
+                # Check if it's a rate limit error
+                if "429" in str(e) or "rate" in error_str or "limit" in error_str:
+                    wait_time = min(120, (2 ** attempt) * 10)  # 10s, 20s, 40s, 80s, 120s
                     
                     logger.warning(
-                        f"[{self.caller_id}] Quota/rate limit hit (attempt {attempt + 1}/{self.max_retries}). "
+                        f"[{self.caller_id}] Rate limit hit (attempt {attempt + 1}/{self.max_retries}). "
                         f"Waiting {wait_time:.1f}s before retry..."
                     )
                     
@@ -238,7 +241,7 @@ class LLMProcessor:
                     else:
                         logger.error(
                             f"[{self.caller_id}] Failed after {self.max_retries} attempts. "
-                            f"You may have exceeded daily quota."
+                            f"Rate limit still active."
                         )
                 else:
                     # Standard exponential backoff for other errors
@@ -255,37 +258,26 @@ class LLMProcessor:
         logger.error(f"[{self.caller_id}] LLM call failed after {self.max_retries} attempts: {last_error}")
         raise RuntimeError(f"LLM call failed after {self.max_retries} retries") from last_error
     
-    def _extract_content(self, response: Any) -> str:
-        """Extract text content from LLM response."""
-        content = getattr(response, "content", None)
-        
-        # Handle list of content blocks (Gemini format)
-        if isinstance(content, list):
-            content = "".join(
-                block.get("text", "") if isinstance(block, dict) else str(block)
-                for block in content
-            )
-        
-        if not content or not isinstance(content, str):
-            raise ValueError("Invalid response format from LLM")
-        
-        return content.strip()
-    
     def _parse_json(self, text: str) -> Dict[str, Any]:
         """Parse JSON from LLM response, handling markdown code blocks."""
+        import re
+        
         text = text.strip()
         
         # Remove markdown code blocks if present
         if text.startswith("```"):
             lines = text.split("\n")
-            # Remove first and last lines (``` markers)
             text = "\n".join(lines[1:-1]) if len(lines) > 2 else text
-            # Remove json language hint
             if text.startswith("json"):
                 text = text[4:].strip()
         
+        # Find JSON object
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if not match:
+            raise ValueError("No valid JSON found in LLM response")
+        
         try:
-            return json.loads(text)
+            return json.loads(match.group(0))
         except json.JSONDecodeError as e:
             logger.error(f"[{self.caller_id}] Failed to parse JSON: {e}")
             logger.debug(f"Problematic text: {text[:500]}")
@@ -314,7 +306,7 @@ def create_analysis_prompt(
     """
     requirements = processing_requirements or []
     
-    # Enhanced prompt for better summaries (limit text to avoid token issues)
+    # Limit text to avoid token issues
     text_preview = text[:4000] if len(text) > 4000 else text
     truncated = " ...[truncated for length]" if len(text) > 4000 else ""
     
@@ -444,7 +436,7 @@ def analyze_page(
             "section": section_name,
             "status": "error",
             "error": "DAILY_QUOTA_EXCEEDED",
-            "summary": f"[ERROR: Daily quota exceeded. Please wait or upgrade to paid tier.]",
+            "summary": f"[ERROR: Daily quota exceeded. Please wait or check your Mistral account.]",
             "entities": [],
             "keywords": [],
             "key_points": [],

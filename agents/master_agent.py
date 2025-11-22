@@ -21,13 +21,14 @@ logger = get_logger("MasterAgent")
 class MasterAgent:
     """MasterAgent generates SubMaster execution plans with user feedback."""
     
+
     def __init__(self, model=None, temperature=0.3):
         self.id = f"MA-{uuid.uuid4().hex[:6].upper()}"
         self.logger = logger
         
-        model = model or "gemini-2.0-flash-exp"
+        # Use Mistral Small by default
+        model = model or os.getenv("LLM_MODEL", "mistral-small-latest")
         
-       
         self.llm = LLMProcessor(
             model=model,
             temperature=temperature,

@@ -100,7 +100,7 @@ class Mapper:
             "brief_info": user_config.get("brief_info", ""),
             
             # Processing config
-            "preferred_model": user_config.get("preferred_model", "gemini-2.0-flash-exp"),
+            "preferred_model": user_config.get("preferred_model", "mistral-small-latest"),
             "complexity_level": user_config.get("complexity_level", "medium"),
             "priority": user_config.get("priority", "medium"),
             "max_parallel_submasters": user_config.get("max_parallel_submasters", 2),
@@ -208,11 +208,12 @@ if __name__ == "__main__":
         sys.exit(1)
     
     config = {
-        "document_type": "research_paper",
-        "processing_requirements": ["summary_generation", "entity_extraction", "keyword_indexing"],
-        "complexity_level": "high",
-        "priority": "high"
-    }
+    "document_type": "research_paper",
+    "processing_requirements": ["summary_generation", "entity_extraction", "keyword_indexing"],
+    "complexity_level": "high",
+    "priority": "high",
+    "preferred_model": "mistral-small-latest"  # Updated
+}
     
     mapper = Mapper()
     result = mapper.execute(sys.argv[1], config)

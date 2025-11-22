@@ -17,18 +17,20 @@ class WorkerAgent:
     """WorkerAgent processes individual pages or small chunks."""
     
     def __init__(
-        self, 
-        worker_id: str,
-        llm_model: str = "gemini-2.0-flash-exp",
-        processing_requirements: list = None
-    ):
+    self, 
+    worker_id: str,
+    llm_model: str = None,
+    processing_requirements: list = None
+):
         """Initialize Worker Agent."""
         self.worker_id = worker_id
-        self.llm_model = llm_model
+        self.llm_model = llm_model or os.getenv("LLM_MODEL", "mistral-small-latest")
         self.processing_requirements = processing_requirements or []
         self.llm_processor = None
         
         logger.info(f"[{worker_id}] WorkerAgent initialized")
+
+
     
     def initialize(self):
         """Initialize LLM processor for this worker."""

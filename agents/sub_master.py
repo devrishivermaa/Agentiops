@@ -33,8 +33,11 @@ class SubMaster:
         # Get processing requirements
         self.processing_requirements = metadata.get("processing_requirements", [])
         
+
         # Get LLM config
-        self.llm_model = metadata.get("preferred_model", "gemini-2.0-flash-exp")
+        self.llm_model = metadata.get("preferred_model", "mistral-small-latest")
+
+
         
         # Worker configuration
         self.num_workers_per_submaster = metadata.get("num_workers_per_submaster", 3)
