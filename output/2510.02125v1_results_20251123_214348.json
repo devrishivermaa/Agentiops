@@ -1,0 +1,77 @@
+{
+  "SM-001": {
+    "status": "ok",
+    "output": {
+      "sm_id": "SM-001",
+      "status": "completed",
+      "elapsed": 6.825194597244263,
+      "output": {
+        "role": "Summarize Abstract and Introduction",
+        "assigned_sections": [
+          "Abstract",
+          "Introduction"
+        ],
+        "page_range": [
+          1,
+          6
+        ],
+        "total_pages": 6,
+        "context_usage": "6/6",
+        "results": [
+          {
+            "page": 1,
+            "section": "Abstract",
+            "text_preview": "Preprint. Under Review\nDOAI MODELSPERFORMHUMAN-LIKEABSTRACT\nREASONINGACROSSMODALITIES?\nClaas Beger\nSanta Fe Institute\nclaasbeger@santafe.edu\nRyan Yi\nSanta Fe Institute\nryi@santafe.edu\nShuhao Fu\nSanta Fe Institute\nfushuhao@santafe.edu\nArseny Moskvichev\nAdvanced Micro Devices, Inc.\narseny.moskvichev@g...",
+            "char_count": 3336,
+            "worker_id": "SM-001-W1",
+            "global_context_used": true,
+            "summary": "The paper investigates whether AI models can perform human-like abstract reasoning across different modalities (textual and visual) using the ConceptARC benchmark. It evaluates models based on output accuracy and the quality of generated natural-language rules, revealing that while some models match human accuracy, they often rely on surface-level shortcuts rather than intended abstractions. Visual modality performance drops sharply, but models still exhibit some abstract reasoning. The study suggests that accuracy alone may overestimate or underestimate AI reasoning capabilities, and proposes a more comprehensive evaluation framework.",
+            "entities": [
+              "Claas Beger",
+              "Ryan Yi",
+              "Shuhao Fu",
+              "Arseny Moskvichev",
+              "Sarah W. Tsai",
+              "Sivasankaran Rajamanickam",
+              "Melanie Mitchell",
+              "Santa Fe Institute",
+              "Advanced Micro Devices, Inc.",
+              "Sandia National Laboratories",
+              "OpenAI",
+              "ARC-AGI benchmark",
+              "ConceptARC benchmark",
+              "Python tools",
+              "natural-language rules",
+              "abstractions",
+              "textual modality",
+              "visual modality"
+            ],
+            "keywords": [
+              "abstract reasoning",
+              "AI models",
+              "ConceptARC benchmark",
+              "human-like reasoning",
+              "multimodal evaluation",
+              "accuracy",
+              "surface-level shortcuts",
+              "textual modality",
+              "visual modality",
+              "abstraction-centered intelligence"
+            ],
+            "key_points": [
+              "AI models may over-rely on surface-level patterns for reasoning",
+              "Visual modality performance is lower but still shows some abstract reasoning",
+              "Accuracy alone may misrepresent AI reasoning capabilities",
+              "Proposed evaluation framework assesses both output and rule quality"
+            ],
+            "technical_terms": [
+              "ARC-AGI benchmark",
+              "ConceptARC benchmark",
+              "few-shot rule-induction",
+              "analogical reasoning",
+              "natural-language rules",
+              "multimodal models"
+            ],
+            "status": "success",
+            "processing_time": 2.6520164012908936,
+            "_id": 

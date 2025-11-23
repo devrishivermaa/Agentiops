@@ -1,27 +1,28 @@
-# run_pipeline.py
 """
-Complete pipeline: Mapper → MasterAgent → SubMasters → Reports
+Complete pipeline: Mapper -> MasterAgent -> ResidualAgent -> SubMasters -> Reports
 """
 
 import os
 import sys
 import json
+import ray
+
 from workflows.mapper import Mapper
 from agents.master_agent import MasterAgent
+from agents.residual_agent import ResidualAgentActor
 from orchestrator import spawn_submasters_and_run
 from utils.report_generator import generate_analysis_report
 from utils.logger import get_logger
 
 logger = get_logger("Pipeline")
 
+
 def run_complete_pipeline(pdf_path: str, config: dict = None):
-    """Run the complete document processing pipeline."""
-    
     print("\n" + "=" * 80)
-    print("🚀 AGENTOPS COMPLETE PIPELINE")
+    print("AGENTOPS COMPLETE PIPELINE")
     print("=" * 80)
-    
-    # Default configuration
+
+    # default config
     if config is None:
         config = {
             "document_type": "research_paper",
@@ -34,185 +35,138 @@ def run_complete_pipeline(pdf_path: str, config: dict = None):
             "brief_info": "Research paper analysis",
             "complexity_level": "high",
             "priority": "high",
-            "preferred_model": "mistral-small-latest",  # Updated
-            "max_parallel_submasters": 3,  # Can increase with Mistral's better limits
+            "preferred_model": "mistral-small-latest",
+            "max_parallel_submasters": 3,
             "num_workers_per_submaster": 4,
             "feedback_required": True
         }
 
-    
-    # STEP 1: MAPPER - Generate metadata
+    # STEP 1: MAPPER
     print("\n" + "=" * 80)
-    print("[STEP 1/5] MAPPER: Validating PDF and extracting metadata...")
+    print("[STEP 1] MAPPER")
     print("=" * 80)
-    
+
     mapper = Mapper(output_dir="./output")
-    
+
     try:
         mapper_result = mapper.execute(pdf_path, config)
-        
         if mapper_result["status"] != "success":
-            print(f"\n❌ Mapper failed: {mapper_result}")
+            print(f"Mapper failed: {mapper_result}")
             return 1
-        
+
         metadata_path = mapper_result["metadata_path"]
-        print(f"\n✅ Metadata generated: {metadata_path}")
-        print(f"   Pages: {mapper_result['num_pages']}")
-        print(f"   Sections: {mapper_result['num_sections']}")
-        
+        print(f"Metadata generated at: {metadata_path}")
+
     except Exception as e:
-        print(f"\n❌ Mapper failed with exception: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Mapper exception: {e}")
         return 1
-    
-    # STEP 2: MASTER AGENT - Generate execution plan
+
+    # STEP 2: MASTER AGENT
     print("\n" + "=" * 80)
-    print("[STEP 2/5] MASTER AGENT: Generating SubMaster execution plan...")
+    print("[STEP 2] MASTER AGENT")
     print("=" * 80)
-    
+
     try:
-        master_agent = MasterAgent()
-        plan = master_agent.execute(metadata_path)
-        
+        master = MasterAgent()
+        plan = master.execute(metadata_path)
+
         if plan is None or plan.get("status") != "approved":
-            print("\n❌ Plan generation failed or not approved")
+            print("Plan not approved or not generated")
             return 1
-        
-        print(f"\n✅ Plan approved: {plan.get('num_submasters')} SubMasters")
-        
+
+        print(f"Plan approved with {plan.get('num_submasters')} submasters")
+
     except Exception as e:
-        print(f"\n❌ Master Agent failed: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Master Agent exception: {e}")
         return 1
-    
-    # STEP 3: Load metadata
+
+    # STEP 3: RESIDUAL AGENT (Initialize only)
     print("\n" + "=" * 80)
-    print("[STEP 3/5] Loading metadata for processing...")
+    print("[STEP 3] RESIDUAL AGENT INITIALIZATION")
     print("=" * 80)
-    
+
     try:
-        with open(metadata_path, "r", encoding="utf-8") as f:
+        with open(metadata_path, "r", encoding="utf8") as f:
             metadata = json.load(f)
-        print(f"✅ Loaded: {metadata.get('file_name')} ({metadata.get('num_pages')} pages)")
+
+        if not ray.is_initialized():
+            ray.init(ignore_reinit_error=True)
+
+        # Create ResidualAgent actor
+        residual = ResidualAgentActor.remote()
+        print("ResidualAgent actor created")
+
     except Exception as e:
-        print(f"\n❌ Failed to load metadata: {e}")
+        print(f"ResidualAgent initialization exception: {e}")
         return 1
-    
-    # STEP 4: ORCHESTRATOR - Execute SubMasters
+
+    # STEP 4: ORCHESTRATOR (passes residual handle)
     print("\n" + "=" * 80)
-    print("[STEP 4/5] ORCHESTRATOR: Executing SubMasters in parallel...")
+    print("[STEP 4] ORCHESTRATOR + RESIDUAL AGENT CONTEXT GENERATION")
     print("=" * 80)
-    
+
     try:
-        results = spawn_submasters_and_run(plan, metadata)
-        print(f"\n✅ Processing completed: {len(results)} SubMasters finished")
+        # The orchestrator will:
+        # 1. Spawn and initialize SubMasters (and workers)
+        # 2. Register them with ResidualAgent
+        # 3. Call residual.generate_and_distribute()
+        # 4. Run processing
+        results = spawn_submasters_and_run(plan, metadata, residual_handle=residual)
+        print(f"Completed: {len(results)} submasters")
+        
+        # Print context usage summary
+        for sm_id, result in results.items():
+            if result.get("status") == "ok":
+                context_usage = result.get("output", {}).get("output", {}).get("context_usage", "N/A")
+                print(f"  {sm_id}: {context_usage}")
+                
     except Exception as e:
-        print(f"\n❌ SubMaster execution failed: {e}")
+        print(f"SubMaster run exception: {e}")
         import traceback
         traceback.print_exc()
         return 1
-    
-    # STEP 5: REPORT GENERATOR - Create outputs
+
+    # STEP 5: REPORT GENERATOR
     print("\n" + "=" * 80)
-    print("[STEP 5/5] REPORT GENERATOR: Creating analysis reports...")
+    print("[STEP 5] REPORT GENERATOR")
     print("=" * 80)
-    
+
     try:
-        report_files = generate_analysis_report(results, metadata, output_dir="output")
-        
-        print("\n✅ Reports generated:")
-        if 'json' in report_files:
-            print(f"   📊 JSON: {report_files['json']}")
-        if 'pdf' in report_files:
-            print(f"   📄 PDF: {report_files['pdf']}")
-        elif 'pdf_error' in report_files:
-            print(f"   ⚠️  PDF failed: {report_files['pdf_error']}")
-            print(f"   💡 JSON report is still available")
-        
+        files = generate_analysis_report(results, metadata, output_dir="output")
+
+        print("Reports generated:")
+        for k, v in files.items():
+            print(f"{k}: {v}")
+
     except Exception as e:
-        print(f"\n⚠️  Report generation failed: {e}")
-        print("   (Results are still available)")
+        print(f"Report generation exception: {e}")
         import traceback
         traceback.print_exc()
-    
-    # FINAL SUMMARY
+
     print("\n" + "=" * 80)
-    print("📊 FINAL SUMMARY")
+    print("PIPELINE COMPLETED")
     print("=" * 80)
-    
-    total_success = sum(1 for r in results.values() if r.get('status') == 'ok')
-    total_failures = len(results) - total_success
-    
-    total_llm_success = 0
-    total_llm_failures = 0
-    total_entities = 0
-    total_keywords = 0
-    total_pages_processed = 0
-    
-    for sm_id, info in results.items():
-        if info['status'] == 'ok':
-            output = info['output']
-            total_llm_success += output.get('llm_successes', 0)
-            total_llm_failures += output.get('llm_failures', 0)
-            total_entities += output.get('total_entities', 0)
-            total_keywords += output.get('total_keywords', 0)
-            total_pages_processed += output.get('total_pages', 0)
-            
-            print(f"\n✅ {sm_id}")
-            print(f"   Role: {output.get('role', 'N/A')[:70]}...")
-            print(f"   Pages: {output.get('total_pages', 0)} | "
-                  f"Entities: {output.get('total_entities', 0)} | "
-                  f"Keywords: {output.get('total_keywords', 0)}")
-            
-            summary = output.get('aggregate_summary', '')
-            if summary and len(summary) > 20 and not summary.startswith("No analysis"):
-                preview = summary[:150] + "..." if len(summary) > 150 else summary
-                print(f"   📝 {preview}")
-        else:
-            print(f"\n❌ {sm_id}: {info.get('error', 'Unknown error')}")
-    
-    print("\n" + "=" * 80)
-    print(f"SubMasters: {total_success} successful, {total_failures} failed")
-    print(f"Pages Processed: {total_pages_processed}")
-    print(f"LLM Analyses: {total_llm_success} successful, {total_llm_failures} failed")
-    print(f"Extracted: {total_entities} entities, {total_keywords} keywords")
-    
-    if total_llm_success > 0:
-        success_rate = (total_llm_success / (total_llm_success + total_llm_failures)) * 100
-        print(f"Success Rate: {success_rate:.1f}%")
-    
-    print("=" * 80)
-    print("\n🎉 PIPELINE COMPLETED SUCCESSFULLY!\n")
-    
     return 0
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python run_pipeline.py <pdf_path>")
-        print("\nExample:")
-        print("  python run_pipeline.py data/2510.02125v1.pdf")
         sys.exit(1)
-    
+
     pdf_path = sys.argv[1]
-    
+
     if not os.path.exists(pdf_path):
-        print(f"❌ Error: PDF file not found: {pdf_path}")
+        print(f"PDF not found: {pdf_path}")
         sys.exit(1)
-    
-    # Optional: Load custom config from JSON file
+
     config = None
     if len(sys.argv) > 2:
-        config_path = sys.argv[2]
         try:
-            with open(config_path, 'r') as f:
+            with open(sys.argv[2], "r") as f:
                 config = json.load(f)
-            print(f"✅ Loaded custom config from: {config_path}")
-        except Exception as e:
-            print(f"⚠️  Failed to load config (using defaults): {e}")
-    
-    exit_code = run_complete_pipeline(pdf_path, config)
-    sys.exit(exit_code)
+            print("Loaded custom config")
+        except Exception:
+            print("Config load failed, using defaults")
 
+    exit(run_complete_pipeline(pdf_path, config))

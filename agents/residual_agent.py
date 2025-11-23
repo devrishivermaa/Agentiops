@@ -1,52 +1,561 @@
 # agents/residual_agent.py
+
 """
-ResidualAgent: Handles failed tasks and quality validation.
-Performs retry logic and error correction.
+ResidualAgent (Option B: Active Coordinator with Worker Allocation Awareness)
+
+This Ray actor:
+- Generates an initial global_context from metadata + master plan using the LLM
+- Broadcasts that context to registered SubMasters
+- Waits briefly for submaster task maps (which tell which worker is doing what)
+- Enhances the context using gathered updates via the LLM
+- Broadcasts enhanced context to registered Worker actors
+- Optionally persists snapshots to MongoDB (if MONGO_URI and MONGO_DB set)
+- Provides RPC endpoints for SubMasters and Workers to push updates
 """
 
+import os
+import json
+import time
+import uuid
+import re
+import threading
+from typing import Dict, Any, List, Optional, Any
+
+import ray
+from pymongo import MongoClient
+from pymongo.collection import Collection
+
 from utils.logger import get_logger
+from utils.llm_helper import LLMProcessor
 
 logger = get_logger("ResidualAgent")
 
 
-class ResidualAgent:
-    """
-    ResidualAgent handles:
-    - Failed task retry
-    - Quality validation
-    - Error correction
-    """
-    
-    def __init__(self):
-        logger.info("ResidualAgent initialized")
-    
-    def validate_results(self, results: dict) -> dict:
-        """
-        Validate processing results.
-        
-        Args:
-            results: Processing results to validate
-            
-        Returns:
-            Validation report
-        """
-        logger.info("Validating results...")
-        
-        # Placeholder validation logic
-        return {
-            "status": "validated",
-            "errors": [],
-            "warnings": []
+@ray.remote
+class ResidualAgentActor:
+    def __init__(self, model: Optional[str] = None, persist: bool = True):
+        self.id = f"RA-{uuid.uuid4().hex[:8].upper()}"
+        self.lock = threading.RLock()
+
+        model = model or os.getenv("LLM_MODEL", "mistral-small-latest")
+        # initialize LLM processor (LLMProcessor should handle its own exceptions)
+        self.llm = LLMProcessor(
+            model=model,
+            temperature=0.25,
+            max_retries=4,
+            caller_id=self.id
+        )
+
+        # canonical global context
+        self.global_context: Dict[str, Any] = {
+            "high_level_intent": "",
+            "document_context": "",
+            "master_strategy": "",
+            "section_overview": {"sections": []},
+            "worker_guidance": {},
+            "submaster_guidance": {},
+            "important_constraints": [],
+            "expected_outputs": "",
+            "reasoning_style": "short factual precise globally consistent",
+            "work_allocations": {},       # submaster -> list of worker task entries
+            "generated_at": None,
+            "residual_id": self.id
         }
-    
-    def retry_failed_tasks(self, failed_tasks: list):
+
+        self.update_history: List[Dict[str, Any]] = []
+        self.submaster_handles: List[Any] = []
+        self.worker_handles: List[Any] = []
+
+        # persistence
+        self.persist = persist
+        self.mongo_client: Optional[MongoClient] = None
+        self.mongo_coll: Optional[Collection] = None
+
+        if persist:
+            try:
+                uri = os.getenv("MONGO_URI")
+                db = os.getenv("MONGO_DB")
+                coll = os.getenv("MONGO_RESIDUAL_COLLECTION", "residual_memory")
+                if uri and db:
+                    self.mongo_client = MongoClient(uri)
+                    self.mongo_coll = self.mongo_client[db][coll]
+                    logger.info(f"[{self.id}] Connected to MongoDB {db}.{coll}")
+                    # try to load latest snapshot quietly
+                    try:
+                        self._load_latest_from_db()
+                    except Exception:
+                        logger.exception(f"[{self.id}] Failed to load latest snapshot from MongoDB")
+                else:
+                    logger.warning(f"[{self.id}] Mongo disabled. Missing MONGO_URI or MONGO_DB")
+                    self.persist = False
+            except Exception:
+                logger.exception(f"[{self.id}] Mongo init failed, disabling persistence")
+                self.persist = False
+
+        logger.info(f"[{self.id}] ResidualAgentActor initialized (persist={self.persist})")
+
+
+    # registration helpers
+
+    def register_submasters(self, handles: List[Any]) -> Dict[str, int]:
+        with self.lock:
+            for h in handles:
+                if h not in self.submaster_handles:
+                    self.submaster_handles.append(h)
+        return {"registered_submasters": len(self.submaster_handles)}
+
+    def register_workers(self, handles: List[Any]) -> Dict[str, int]:
+        with self.lock:
+            for h in handles:
+                if h not in self.worker_handles:
+                    self.worker_handles.append(h)
+        return {"registered_workers": len(self.worker_handles)}
+
+
+    # main flow
+
+    def generate_and_distribute(self, metadata: Dict[str, Any], master_plan: Dict[str, Any],
+                                wait_for_updates_seconds: int = 10) -> Dict[str, Any]:
         """
-        Retry failed processing tasks.
-        
-        Args:
-            failed_tasks: List of failed tasks
+        1) create initial global_context from LLM
+        2) broadcast to submasters
+        3) wait for submaster task maps for up to wait_for_updates_seconds
+        4) enhance global_context using the updates
+        5) broadcast enhanced context to workers
+        6) return final snapshot
         """
-        logger.info(f"Retrying {len(failed_tasks)} failed tasks")
-        
-        # Placeholder retry logic
-        pass
+        try:
+            gc = self._generate_initial_context(metadata, master_plan)
+        except Exception:
+            logger.exception(f"[{self.id}] Failed to generate initial context")
+            # return current canonical snapshot
+            return self.get_snapshot()
+
+        # broadcast to submasters (fire and forget)
+        self._broadcast_to_submasters(gc)
+
+        # wait for submaster task maps
+        self._wait_for_submaster_task_maps(wait_for_updates_seconds)
+
+        # capture updates copy and enhance
+        with self.lock:
+            updates_copy = list(self.update_history)
+
+        enhanced = self._enhance_context_with_updates(metadata, master_plan, updates_copy)
+
+        # broadcast to workers
+        self._broadcast_to_workers(enhanced)
+
+        # persist and return
+        if self.persist:
+            try:
+                self._maybe_persist()
+            except Exception:
+                logger.exception(f"[{self.id}] Failed to persist final snapshot")
+
+        return self.get_snapshot()
+
+
+    # RPC endpoints for receiving updates
+
+    def update_from_submaster(self, update: Dict[str, Any], author: str) -> Dict[str, str]:
+        """
+        Expected update example:
+        {
+          "submaster_id": "SM-001",
+          "section_name": "Introduction",
+          "work_distribution": [
+               { "worker_id": "SM-001-W1", "task_type": "summary", "page_range": [2,4], "status": "assigned" }
+          ]
+        }
+        """
+        with self.lock:
+            self.update_history.append({
+                "timestamp": time.time(),
+                "author": author,
+                "source": "submaster",
+                "payload": update
+            })
+            try:
+                self._merge_submaster_task_map(update)
+            except Exception:
+                logger.exception(f"[{self.id}] Failed to merge submaster task map from {author}")
+            try:
+                self._maybe_persist()
+            except Exception:
+                logger.exception(f"[{self.id}] Failed to persist after submaster update")
+        return {"status": "ok"}
+
+
+    def update_from_worker(self, update: Dict[str, Any], author: str) -> Dict[str, Any]:
+        """
+        Worker updates can be lightweight page-level results or status updates.
+        e.g. {"worker_id": "SM-001-W2", "page": 3, "status": "done", "entities": [...], "keywords": [...], "summary": "..."}
+        """
+        with self.lock:
+            self.update_history.append({
+                "timestamp": time.time(),
+                "author": author,
+                "source": "worker",
+                "payload": update
+            })
+            try:
+                self._merge_worker_output(update)
+            except Exception:
+                logger.exception(f"[{self.id}] Failed to merge worker update from {author}")
+            try:
+                self._maybe_persist()
+            except Exception:
+                logger.exception(f"[{self.id}] Failed to persist after worker update")
+        return {"status": "ok"}
+
+
+    # initial generation
+
+    def _generate_initial_context(self, metadata: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
+        prompt = self._build_prompt(metadata, plan)
+        raw = self.llm.call_with_retry(prompt, parse_json=False)
+
+        parsed = self._safe_extract_json(raw)
+        gc = parsed.get("global_context") if isinstance(parsed, dict) else None
+
+        if not isinstance(gc, dict):
+            raise ValueError("LLM did not return a valid 'global_context' object")
+
+        with self.lock:
+            gc["generated_at"] = time.time()
+            gc["residual_id"] = self.id
+            self._merge_generated_context(gc)
+            self.update_history.append({"timestamp": time.time(), "source": "residual_llm_init"})
+            # persist a snapshot if enabled
+            try:
+                self._maybe_persist()
+            except Exception:
+                logger.exception(f"[{self.id}] Failed to persist initial snapshot")
+
+        return json.loads(json.dumps(self.global_context))
+
+
+    # broadcast helpers
+
+    def _broadcast_to_submasters(self, context: Dict[str, Any]) -> None:
+        if not self.submaster_handles:
+            logger.info(f"[{self.id}] No submasters registered")
+            return
+        logger.info(f"[{self.id}] Broadcasting context to {len(self.submaster_handles)} submasters")
+        for h in self.submaster_handles:
+            try:
+                # submaster actor must implement set_global_context(context)
+                h.set_global_context.remote(context)
+            except Exception:
+                logger.exception(f"[{self.id}] Failed to send context to a submaster actor")
+
+    def _broadcast_to_workers(self, context: Dict[str, Any]) -> None:
+        if not self.worker_handles:
+            logger.info(f"[{self.id}] No workers registered")
+            return
+        logger.info(f"[{self.id}] Broadcasting context to {len(self.worker_handles)} workers")
+        for h in self.worker_handles:
+            try:
+                # worker actor should implement set_global_context(context)
+                h.set_global_context.remote(context)
+            except Exception:
+                logger.exception(f"[{self.id}] Failed to send context to a worker actor")
+
+
+    # waiting for submaster maps
+
+    def _wait_for_submaster_task_maps(self, timeout_seconds: int) -> None:
+        deadline = time.time() + max(0, int(timeout_seconds))
+        logger.info(f"[{self.id}] Waiting up to {timeout_seconds}s for submaster task maps")
+        while time.time() < deadline:
+            with self.lock:
+                sub_updates = [u for u in self.update_history if u.get("source") == "submaster"]
+                distinct_authors = {u.get("author") for u in sub_updates if u.get("author")}
+                if len(distinct_authors) >= len(self.submaster_handles):
+                    logger.info(f"[{self.id}] Received task maps from {len(distinct_authors)} submasters")
+                    return
+            time.sleep(0.5)
+        logger.info(f"[{self.id}] Wait timeout reached. Collected {len(sub_updates)} submaster updates")
+
+
+    # enhancement with updates
+
+    def _enhance_context_with_updates(self, metadata: Dict[str, Any], plan: Dict[str, Any], updates: List[Dict[str, Any]]) -> Dict[str, Any]:
+        try:
+            prev = json.dumps(self.global_context, indent=2, ensure_ascii=False)
+            upd = json.dumps(updates[-25:], indent=2, ensure_ascii=False)
+        except Exception:
+            prev = str(self.global_context)
+            upd = str(updates)
+
+        prompt = f"""
+You are a ResidualAgent responsible for maintaining a global context for a multi-agent system.
+
+Previous global_context:
+{prev}
+
+Recent updates (submasters + workers):
+{upd}
+
+Produce ONLY valid JSON with top-level key "global_context". Make conservative edits: merge allocations, update section notes, and ensure worker guidance reflects recent task maps.
+"""
+        try:
+            raw = self.llm.call_with_retry(prompt, parse_json=False)
+            parsed = self._safe_extract_json(raw)
+            new_gc = parsed.get("global_context")
+            if not isinstance(new_gc, dict):
+                raise ValueError("Enhancement LLM response missing global_context")
+        except Exception:
+            logger.exception(f"[{self.id}] Enhancement LLM failed; returning current global_context")
+            return json.loads(json.dumps(self.global_context))
+
+        with self.lock:
+            new_gc["generated_at"] = time.time()
+            new_gc["residual_id"] = self.id
+            self._merge_generated_context(new_gc)
+            self.update_history.append({"timestamp": time.time(), "source": "residual_llm_enhance"})
+            try:
+                self._maybe_persist()
+            except Exception:
+                logger.exception(f"[{self.id}] Failed to persist after enhancement")
+            logger.info(f"[{self.id}] Enhanced global_context merged")
+
+        return json.loads(json.dumps(self.global_context))
+
+
+    # merging submaster task maps into work_allocations
+
+    def _merge_submaster_task_map(self, update: Dict[str, Any]) -> None:
+        sm_id = update.get("submaster_id") or update.get("submaster")
+        work_list = update.get("work_distribution", []) or update.get("work_allocation", [])
+        section = update.get("section_name") or update.get("section")
+
+        if not sm_id or not work_list:
+            return
+
+        with self.lock:
+            allocations = self.global_context.setdefault("work_allocations", {})
+            sm_alloc = allocations.setdefault(sm_id, [])
+
+            for task in work_list:
+                entry = {
+                    "worker_id": task.get("worker_id"),
+                    "section": section,
+                    "task_type": task.get("task_type"),
+                    "pages": task.get("page_range") or task.get("pages"),
+                    "status": task.get("status", "assigned")
+                }
+                # avoid duplicates by simple equality check
+                if entry not in sm_alloc:
+                    sm_alloc.append(entry)
+
+            # store back
+            allocations[sm_id] = sm_alloc
+            self.global_context["work_allocations"] = allocations
+
+
+    # merging worker outputs (basic aggregation)
+
+    def _merge_worker_output(self, worker_update: Dict[str, Any]) -> None:
+        # aggregate top-level entities/keywords when present, attach short summary into section notes
+        if not worker_update:
+            return
+
+        with self.lock:
+            # aggregate global_entities
+            ents = set(self.global_context.get("global_entities", []))
+            for e in worker_update.get("entities", []) or []:
+                ents.add(e)
+            if ents:
+                self.global_context["global_entities"] = list(ents)
+
+            # aggregate global_keywords
+            kws = set(self.global_context.get("global_keywords", []))
+            for k in worker_update.get("keywords", []) or []:
+                kws.add(k)
+            if kws:
+                self.global_context["global_keywords"] = list(kws)
+
+            # attach summary to section notes
+            section = worker_update.get("section")
+            summary = worker_update.get("summary") or worker_update.get("short_summary")
+            page = worker_update.get("page")
+            if section and summary:
+                secs = self.global_context.setdefault("section_overview", {}).setdefault("sections", [])
+                tgt = next((s for s in secs if s.get("name") == section), None)
+                if not tgt:
+                    tgt = {"name": section, "purpose": "", "page_range": [], "importance": "medium", "dependencies": []}
+                    secs.append(tgt)
+                old = tgt.get("notes", "")
+                addition = f" [p{page}] {summary}" if page else f" {summary}"
+                tgt["notes"] = (old + addition).strip()
+                # write back
+                self.global_context["section_overview"]["sections"] = secs
+
+
+    # merging generated context from LLM
+
+    def _merge_generated_context(self, new: Dict[str, Any]) -> None:
+        # top-level text fields
+        for key in ["high_level_intent", "document_context", "master_strategy", "expected_outputs", "reasoning_style"]:
+            if key in new and new[key]:
+                self.global_context[key] = new[key]
+
+        # replace/merge section overview conservatively
+        new_sections = new.get("section_overview", {}).get("sections", [])
+        if new_sections:
+            # simple replace for now, but preserve any existing notes/allocations if names match
+            existing_secs = {s.get("name"): s for s in self.global_context.get("section_overview", {}).get("sections", [])}
+            for s in new_sections:
+                name = s.get("name")
+                if name and name in existing_secs:
+                    # merge purpose and dependencies
+                    ex = existing_secs[name]
+                    ex["purpose"] = (ex.get("purpose", "") + " " + s.get("purpose", "")).strip()
+                    # merge dependencies
+                    deps = set(ex.get("dependencies", []))
+                    for d in s.get("dependencies", []):
+                        deps.add(d)
+                    ex["dependencies"] = list(deps)
+                    # keep other keys from new
+                    for k, v in s.items():
+                        if k not in ("purpose", "dependencies") and v:
+                            ex[k] = v
+                    existing_secs[name] = ex
+                else:
+                    existing_secs[name] = s
+            self.global_context["section_overview"]["sections"] = list(existing_secs.values())
+
+        # guidance replacement/merge
+        if "worker_guidance" in new and isinstance(new["worker_guidance"], dict):
+            dest = self.global_context.get("worker_guidance", {})
+            for k, v in new["worker_guidance"].items():
+                if k not in dest or not dest[k]:
+                    dest[k] = v
+                else:
+                    # concat short strings
+                    if isinstance(dest[k], str) and isinstance(v, str) and len(dest[k]) < 500:
+                        dest[k] = (dest[k].strip() + " " + v.strip()).strip()
+            self.global_context["worker_guidance"] = dest
+
+        if "submaster_guidance" in new and isinstance(new["submaster_guidance"], dict):
+            dest = self.global_context.get("submaster_guidance", {})
+            for k, v in new["submaster_guidance"].items():
+                if k not in dest or not dest[k]:
+                    dest[k] = v
+                else:
+                    if isinstance(dest[k], str) and isinstance(v, str) and len(dest[k]) < 500:
+                        dest[k] = (dest[k].strip() + " " + v.strip()).strip()
+            self.global_context["submaster_guidance"] = dest
+
+        # constraints
+        if "important_constraints" in new and isinstance(new["important_constraints"], list):
+            existing = set(self.global_context.get("important_constraints", []))
+            for c in new["important_constraints"]:
+                existing.add(c)
+            self.global_context["important_constraints"] = list(existing)
+
+
+    # robust JSON extraction from LLM output
+
+    def _safe_extract_json(self, text: str) -> Dict[str, Any]:
+        """
+        Attempt to extract a single JSON object from the LLM output.
+        Strategy:
+          - find first '{' and last '}' occurrence and try to load
+          - if fails, fallback to regex-based greedy capture
+        """
+        if not text or not isinstance(text, str):
+            raise ValueError("No text to parse")
+
+        # try first/last brace slice
+        first = text.find("{")
+        last = text.rfind("}")
+        if first != -1 and last != -1 and last > first:
+            candidate = text[first:last+1]
+            try:
+                return json.loads(candidate)
+            except Exception:
+                # fallthrough to regex
+                pass
+
+        # fallback: regex greedy (less safe but sometimes works)
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except Exception:
+                raise ValueError("Failed to parse JSON from LLM output")
+        raise ValueError("No JSON object found in LLM output")
+
+
+    def _build_prompt(self, metadata: Dict[str, Any], plan: Dict[str, Any]) -> str:
+        try:
+            md = json.dumps(metadata, indent=2, ensure_ascii=False)
+        except Exception:
+            md = str(metadata)
+        try:
+            pl = json.dumps(plan, indent=2, ensure_ascii=False)
+        except Exception:
+            pl = str(plan)
+
+        return f"""
+Generate a 'global_context' JSON object for a multi-agent PDF pipeline.
+
+Input metadata:
+{md}
+
+Input master plan:
+{pl}
+
+Output only valid JSON with a top-level key "global_context".
+global_context must include: high_level_intent, document_context, master_strategy,
+section_overview (with sections list), worker_guidance, submaster_guidance,
+important_constraints, expected_outputs, reasoning_style.
+Be conservative: if information is missing, use "unknown" or "not provided".
+"""
+
+
+    # persistence helpers
+
+    def _maybe_persist(self) -> None:
+        if not self.persist or self.mongo_coll is None:
+            return
+        try:
+            doc = {
+                "residual_id": self.id,
+                "timestamp": time.time(),
+                "global_context": self.global_context,
+                "history_tail": self.update_history[-80:]
+            }
+            self.mongo_coll.insert_one(doc)
+            logger.debug(f"[{self.id}] Persisted global_context to MongoDB")
+        except Exception:
+            logger.exception(f"[{self.id}] Failed to persist global_context")
+
+
+    def _load_latest_from_db(self) -> None:
+        if self.mongo_coll is None:
+            return
+        try:
+            doc = self.mongo_coll.find_one(sort=[("timestamp", -1)])
+            if not doc:
+                return
+            gc = doc.get("global_context")
+            if isinstance(gc, dict):
+                with self.lock:
+                    self.global_context = gc
+                    self.update_history = doc.get("history_tail", []) or []
+                logger.info(f"[{self.id}] Loaded existing global_context from MongoDB")
+        except Exception:
+            logger.exception(f"[{self.id}] Failed to load latest global_context from MongoDB")
+
+
+    # utility: snapshot getter
+
+    def get_snapshot(self) -> Dict[str, Any]:
+        with self.lock:
+            # update generated_at
+            self.global_context["generated_at"] = time.time()
+            return json.loads(json.dumps(self.global_context))

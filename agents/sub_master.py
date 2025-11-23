@@ -1,285 +1,333 @@
 # agents/sub_master.py
-"""
-SubMaster coordinates Worker Agents to process document sections.
-"""
 
 import time
 import uuid
 import ray
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from utils.logger import get_logger
 from utils.pdf_extractor import PDFExtractor
 from agents.worker_agent import WorkerAgent
+from pymongo import MongoClient
+import os
 
 logger = get_logger("SubMaster")
 
+
 @ray.remote
 class SubMaster:
-    """SubMaster coordinates Worker Agents to process document sections."""
-    
-    def __init__(self, plan_piece, metadata):
+
+    def __init__(self, plan_piece: Dict[str, Any], metadata: Dict[str, Any], residual_handle: Optional[Any] = None):
         self.sm_id = plan_piece.get("submaster_id", f"SM-{uuid.uuid4().hex[:6].upper()}")
         self.role = plan_piece.get("role", "generic")
         self.sections = plan_piece.get("assigned_sections", [])
         self.pages = plan_piece.get("page_range", [1, 1])
         self.meta = metadata
         self.status = "initialized"
-        
-        # Get PDF path from metadata
+
+        self.residual = residual_handle
+        self.global_context: Dict[str, Any] = {}
+
+        # -----------------------------------
+        # Mongo initialization
+        # -----------------------------------
+        try:
+            uri = os.getenv("MONGO_URI")
+            dbname = os.getenv("MONGO_DB")
+            sm_coll = os.getenv("MONGO_SUBMASTER_COLLECTION", "submaster_results")
+            wk_coll = os.getenv("MONGO_WORKER_COLLECTION", "worker_results")
+
+            if uri and dbname:
+                client = MongoClient(uri)
+                db = client[dbname]
+                self.mongo_sm_coll = db[sm_coll]
+                self.mongo_worker_coll = db[wk_coll]
+                logger.info(f"[{self.sm_id}] Mongo connected")
+            else:
+                self.mongo_sm_coll = None
+                self.mongo_worker_coll = None
+        except Exception as e:
+            logger.error(f"[{self.sm_id}] Mongo init failed {e}")
+            self.mongo_sm_coll = None
+            self.mongo_worker_coll = None
+
+        # -----------------------------------
+        # Runtime config
+        # -----------------------------------
         self.pdf_path = metadata.get("file_path", "")
-        if not self.pdf_path:
-            logger.error(f"[{self.sm_id}] No file_path in metadata!")
-        
-        # Get processing requirements
         self.processing_requirements = metadata.get("processing_requirements", [])
-        
-
-        # Get LLM config
         self.llm_model = metadata.get("preferred_model", "mistral-small-latest")
-
-
-        
-        # Worker configuration
         self.num_workers_per_submaster = metadata.get("num_workers_per_submaster", 3)
-        self.pdf_extractor = None
-        self.workers = []
-        
-        logger.info(
-            f"[{self.sm_id}] Initialized: role={self.role}, pages={self.pages}, "
-            f"workers={self.num_workers_per_submaster}, model={self.llm_model}"
-        )
-    
+
+        self.pdf_extractor: Optional[PDFExtractor] = None
+        self.workers: List[Any] = []
+
+        logger.info(f"[{self.sm_id}] SubMaster initialized with {self.num_workers_per_submaster} workers")
+
+    # ----------------------------------------------------------
+    # allow orchestrator to fetch worker handles
+    # ----------------------------------------------------------
+    def get_worker_handles(self):
+        return self.workers
+
+    # ----------------------------------------------------------
+    # Receive global context and forward to workers
+    # ----------------------------------------------------------
+    def set_global_context(self, context: Dict[str, Any]):
+        try:
+            self.global_context = context or {}
+            logger.info(f"[{self.sm_id}] Received global context with {len(self.global_context.keys())} keys")
+
+            # If workers spawned, forward immediately
+            if self.workers:
+                logger.info(f"[{self.sm_id}] Forwarding context to {len(self.workers)} workers")
+                forward_futures = []
+                for w in self.workers:
+                    try:
+                        fut = w.set_global_context.remote(self.global_context)
+                        forward_futures.append(fut)
+                    except Exception as e:
+                        logger.exception(f"[{self.sm_id}] Failed forwarding global context to worker: {e}")
+                
+                # Wait for all workers to confirm receipt
+                try:
+                    ray.get(forward_futures)
+                    logger.info(f"[{self.sm_id}] All workers confirmed context receipt")
+                except Exception as e:
+                    logger.error(f"[{self.sm_id}] Some workers failed to receive context: {e}")
+            else:
+                logger.warning(f"[{self.sm_id}] No workers available yet to forward context")
+
+            return {"status": "ok", "workers_notified": len(self.workers)}
+
+        except Exception as e:
+            logger.exception(f"[{self.sm_id}] set_global_context error: {e}")
+            return {"status": "error", "error": str(e)}
+
+    # ----------------------------------------------------------
+    # Initialize extractor + workers
+    # ----------------------------------------------------------
     def initialize(self):
-        """Initialize PDF extractor and spawn Worker Agents."""
         self.status = "ready"
-        
-        # Initialize PDF extractor
+
+        # PDF extractor
         try:
             if self.pdf_path:
                 self.pdf_extractor = PDFExtractor(self.pdf_path)
-                logger.info(f"[{self.sm_id}] PDF extractor initialized: {self.pdf_extractor.num_pages} pages")
-            else:
-                logger.warning(f"[{self.sm_id}] No PDF path provided")
         except Exception as e:
-            logger.error(f"[{self.sm_id}] Failed to initialize PDF extractor: {e}")
-            self.pdf_extractor = None
-        
-        # Spawn Worker Agents
-        try:
-            logger.info(f"[{self.sm_id}] Spawning {self.num_workers_per_submaster} workers...")
-            
-            for i in range(self.num_workers_per_submaster):
-                worker_id = f"{self.sm_id}-W{i+1}"
-                
-                worker = WorkerAgent.remote(
-                    worker_id=worker_id,
-                    llm_model=self.llm_model,
-                    processing_requirements=self.processing_requirements
-                )
-                
-                self.workers.append(worker)
-                logger.debug(f"[{self.sm_id}] Spawned worker: {worker_id}")
-            
-            # Initialize all workers
-            init_results = ray.get([w.initialize.remote() for w in self.workers])
-            
-            success_count = sum(1 for r in init_results if r.get("status") == "ready")
-            logger.info(
-                f"[{self.sm_id}] Initialized {success_count}/{self.num_workers_per_submaster} workers"
+            logger.error(f"[{self.sm_id}] PDF extractor init failed {e}")
+
+        # spawn workers
+        logger.info(f"[{self.sm_id}] Spawning {self.num_workers_per_submaster} workers...")
+        for i in range(self.num_workers_per_submaster):
+            wid = f"{self.sm_id}-W{i+1}"
+            worker = WorkerAgent.remote(
+                worker_id=wid,
+                llm_model=self.llm_model,
+                processing_requirements=self.processing_requirements
             )
-            
-        except Exception as e:
-            logger.error(f"[{self.sm_id}] Failed to initialize workers: {e}")
-            self.workers = []
-        
-        return {"sm_id": self.sm_id, "status": "ready", "num_workers": len(self.workers)}
-    
-    def process(self):
-        """Process assigned pages by delegating to Worker Agents."""
-        start_time = time.time()
-        self.status = "running"
-        output = []
-        
-        # Track statistics
-        total_chars_extracted = 0
-        total_entities = 0
-        total_keywords = 0
-        llm_successes = 0
-        llm_failures = 0
-        
-        # Handle multiple page ranges
-        if len(self.pages) % 2 != 0:
-            raise ValueError(f"Invalid page_range for {self.sm_id}: {self.pages}")
-        
-        # Collect all pages to process
-        all_pages = []
-        for i in range(0, len(self.pages), 2):
-            start, end = self.pages[i], self.pages[i + 1]
-            all_pages.extend(range(start, end + 1))
-        
-        logger.info(
-            f"[{self.sm_id}] Processing {len(all_pages)} pages "
-            f"({all_pages[0]}-{all_pages[-1]}) with {len(self.workers)} workers"
-        )
-        
-        if not self.pdf_extractor:
-            logger.error(f"[{self.sm_id}] No PDF extractor available")
-            return self._create_error_result(all_pages, "No PDF extractor")
-        
-        if not self.workers:
-            logger.error(f"[{self.sm_id}] No workers available")
-            return self._create_error_result(all_pages, "No workers")
-        
-        # Extract text for all pages first
+            self.workers.append(worker)
+            logger.info(f"[{self.sm_id}] Created worker: {wid}")
+
+        # initialize workers
         try:
-            logger.info(f"[{self.sm_id}] Extracting text from pages...")
-            extracted_pages = self.pdf_extractor.extract_page_range(all_pages[0], all_pages[-1])
-            logger.info(f"[{self.sm_id}] ✅ Extracted {len(extracted_pages)} pages")
+            init_futures = [w.initialize.remote() for w in self.workers]
+            ray.get(init_futures)
+            logger.info(f"[{self.sm_id}] All {len(self.workers)} workers initialized")
         except Exception as e:
-            logger.error(f"[{self.sm_id}] Failed to extract pages: {e}")
-            return self._create_error_result(all_pages, f"Extraction failed: {e}")
-        
-        # Distribute pages to workers using Ray futures
-        page_futures = []
-        
-        for idx, page_num in enumerate(all_pages):
-            text = extracted_pages.get(page_num, "")
-            total_chars_extracted += len(text)
+            logger.exception(f"[{self.sm_id}] Worker initialization error: {e}")
+
+        # if context was set before workers existed, send it now
+        if self.global_context and self.workers:
+            logger.info(f"[{self.sm_id}] Forwarding pre-existing global context to newly created workers")
+            forward_futures = []
+            for w in self.workers:
+                try:
+                    fut = w.set_global_context.remote(self.global_context)
+                    forward_futures.append(fut)
+                except Exception as e:
+                    logger.exception(f"[{self.sm_id}] Failed sending context to worker during init: {e}")
             
-            # Round-robin worker assignment
-            worker_idx = idx % len(self.workers)
-            worker = self.workers[worker_idx]
+            try:
+                ray.get(forward_futures)
+                logger.info(f"[{self.sm_id}] All workers received pre-existing context")
+            except Exception as e:
+                logger.error(f"[{self.sm_id}] Some workers failed to receive pre-existing context: {e}")
+
+        # if context not set earlier, try to fetch snapshot from residual
+        if not self.global_context and self.residual:
+            try:
+                logger.info(f"[{self.sm_id}] Attempting to pull global context from ResidualAgent")
+                snapshot = ray.get(self.residual.get_snapshot.remote())
+                if isinstance(snapshot, dict):
+                    self.global_context = snapshot
+                    logger.info(f"[{self.sm_id}] Pulled global context from ResidualAgent")
+                    
+                    # Forward to workers
+                    forward_futures = []
+                    for w in self.workers:
+                        try:
+                            fut = w.set_global_context.remote(self.global_context)
+                            forward_futures.append(fut)
+                        except Exception as e:
+                            logger.exception(f"[{self.sm_id}] Failed sending pulled context to worker: {e}")
+                    
+                    try:
+                        ray.get(forward_futures)
+                        logger.info(f"[{self.sm_id}] Pulled context forwarded to all workers")
+                    except Exception as e:
+                        logger.error(f"[{self.sm_id}] Some workers failed to receive pulled context: {e}")
+            except Exception as e:
+                logger.exception(f"[{self.sm_id}] Could not pull global context from residual: {e}")
+
+        return {"sm_id": self.sm_id, "status": "ready", "workers": len(self.workers)}
+
+    # ----------------------------------------------------------
+    # Report worker allocation to residual agent
+    # ----------------------------------------------------------
+    def _report_worker_allocation(self, pages: List[int]):
+        if not self.residual:
+            return
+
+        work_map = []
+        for idx, p in enumerate(pages):
+            worker_id = f"{self.sm_id}-W{idx % len(self.workers) + 1}"
+            work_map.append({
+                "worker_id": worker_id,
+                "task_type": "summary",
+                "page_range": [p, p],
+                "status": "assigned"
+            })
+
+        update = {
+            "submaster_id": self.sm_id,
+            "section_name": ",".join(self.sections),
+            "work_distribution": work_map
+        }
+
+        try:
+            self.residual.update_from_submaster.remote(update, author=self.sm_id)
+            logger.info(f"[{self.sm_id}] Sent worker allocation ({len(work_map)} entries)")
+        except Exception as e:
+            logger.exception(f"[{self.sm_id}] Failed sending worker allocation: {e}")
+
+    # ----------------------------------------------------------
+    # Main page processing
+    # ----------------------------------------------------------
+    def process(self):
+        self.status = "running"
+        start = time.time()
+
+        # build page list
+        pages = []
+        for i in range(0, len(self.pages), 2):
+            s, e = self.pages[i], self.pages[i + 1]
+            pages.extend(range(s, e + 1))
+
+        if not pages:
+            return {"sm_id": self.sm_id, "status": "completed", "output": {"results": []}, "elapsed": 0}
+
+        self._report_worker_allocation(pages)
+
+        extracted = {}
+        if self.pdf_extractor:
+            try:
+                extracted = self.pdf_extractor.extract_page_range(pages[0], pages[-1])
+            except Exception as e:
+                logger.exception(f"[{self.sm_id}] PDF extraction failed: {e}")
+
+        # CRITICAL: Ensure workers have context before processing
+        if self.global_context:
+            logger.info(f"[{self.sm_id}] Ensuring all workers have global context before processing")
+            forward_futures = []
+            for w in self.workers:
+                try:
+                    fut = w.set_global_context.remote(self.global_context)
+                    forward_futures.append(fut)
+                except Exception as e:
+                    logger.exception(f"[{self.sm_id}] Failed re-sending global context: {e}")
             
-            # Get section name for this page
-            section_name = self._get_section_for_page(page_num)
-            
-            # Submit page processing task to worker
-            future = worker.process_page.remote(
-                page_num=page_num,
+            try:
+                results = ray.get(forward_futures)
+                logger.info(f"[{self.sm_id}] All workers confirmed context before processing: {results}")
+            except Exception as e:
+                logger.error(f"[{self.sm_id}] Some workers failed to confirm context: {e}")
+        else:
+            logger.warning(f"[{self.sm_id}] WARNING: No global_context available for workers!")
+
+        # dispatch tasks
+        futures = []
+        for idx, page in enumerate(pages):
+            w = self.workers[idx % len(self.workers)]
+            text = extracted.get(page, "")
+            section = self._get_section_for_page(page)
+
+            fut = w.process_page.remote(
+                page_num=page,
                 text=text,
                 role=self.role,
-                section_name=section_name
+                section_name=section
             )
-            
-            page_futures.append((page_num, future))
-        
-        logger.info(f"[{self.sm_id}] Submitted {len(page_futures)} page tasks to workers")
-        
-        # Collect results as they complete
-        for page_num, future in page_futures:
+            futures.append(fut)
+
+        logger.info(f"[{self.sm_id}] Dispatched {len(futures)} page processing tasks")
+
+        # collect
+        try:
+            results = ray.get(futures)
+            logger.info(f"[{self.sm_id}] Collected {len(results)} results")
+        except Exception as e:
+            logger.error(f"[{self.sm_id}] Worker error {e}")
+            results = []
+
+        # Check if any workers actually used global context
+        context_usage = sum(1 for r in results if r.get("global_context_used", False))
+        logger.info(f"[{self.sm_id}] Global context usage: {context_usage}/{len(results)} pages")
+
+        # FIXED: Compare with None instead of using truth value test
+        if self.mongo_worker_coll is not None:
+            for r in results:
+                try:
+                    self.mongo_worker_coll.insert_one(r)
+                except Exception as e:
+                    logger.error(f"[{self.sm_id}] Failed to insert worker result to MongoDB: {e}")
+
+        # final update to residual agent
+        if self.residual:
             try:
-                page_result = ray.get(future)
-                output.append(page_result)
-                
-                # Update statistics
-                if page_result.get("status") == "success":
-                    llm_successes += 1
-                    total_entities += len(page_result.get("entities", []))
-                    total_keywords += len(page_result.get("keywords", []))
-                else:
-                    llm_failures += 1
-                
-                logger.debug(f"[{self.sm_id}] ✅ Completed page {page_num}")
-                
+                self.residual.update_from_submaster.remote({
+                    "submaster_id": self.sm_id,
+                    "section_name": ",".join(self.sections),
+                    "notes": f"Completed {len(results)} pages"
+                }, author=self.sm_id)
             except Exception as e:
-                logger.error(f"[{self.sm_id}] Worker failed on page {page_num}: {e}")
-                output.append({
-                    "page": page_num,
-                    "error": str(e),
-                    "summary": f"[ERROR: Worker failed on page {page_num}]",
-                    "status": "error",
-                    "entities": [],
-                    "keywords": []
-                })
-                llm_failures += 1
-        
-        # Sort results by page number
-        output.sort(key=lambda x: x.get("page", 0))
-        
+                logger.exception(f"[{self.sm_id}] Post-update failed: {e}")
+
+        elapsed = time.time() - start
         self.status = "completed"
-        elapsed = time.time() - start_time
-        
-        # Generate aggregate summary
-        aggregate_summary = self._generate_aggregate_summary(output)
-        
-        logger.info(
-            f"[{self.sm_id}] ✅ Completed in {elapsed:.1f}s: "
-            f"{len(output)} pages, {total_chars_extracted:,} chars, "
-            f"{llm_successes} successes, {llm_failures} failures"
-        )
-        
+
         return {
             "sm_id": self.sm_id,
-            "role": self.role,
-            "assigned_sections": self.sections,
-            "page_range": self.pages,
-            "num_workers": len(self.workers),
-            "results": output,
-            "total_pages": len(output),
-            "total_chars": total_chars_extracted,
-            "total_entities": total_entities,
-            "total_keywords": total_keywords,
-            "llm_successes": llm_successes,
-            "llm_failures": llm_failures,
-            "aggregate_summary": aggregate_summary,
-            "elapsed_time": elapsed
+            "status": "completed",
+            "elapsed": elapsed,
+            "output": {
+                "role": self.role,
+                "assigned_sections": self.sections,
+                "page_range": self.pages,
+                "total_pages": len(pages),
+                "context_usage": f"{context_usage}/{len(results)}",
+                "results": results
+            }
         }
-    
-    def _get_section_for_page(self, page_num: int) -> str:
-        """Determine which section a page belongs to."""
+
+    # ----------------------------------------------------------
+    # Determine section name for a page
+    # ----------------------------------------------------------
+    def _get_section_for_page(self, page: int) -> str:
         sections = self.meta.get("sections", {})
-        
-        for section_name, page_info in sections.items():
-            start = page_info.get("page_start", 0)
-            end = page_info.get("page_end", 0)
-            
-            if start <= page_num <= end:
-                return section_name
-        
+        for name, info in sections.items():
+            try:
+                if info["page_start"] <= page <= info["page_end"]:
+                    return name
+            except Exception:
+                pass
         return "Unknown"
-    
-    def _generate_aggregate_summary(self, results: list) -> str:
-        """Generate an overall summary from all page results."""
-        summaries = [
-            r.get("summary", "") 
-            for r in results 
-            if r.get("summary") and not r["summary"].startswith("[")
-        ]
-        
-        if not summaries:
-            return "No analysis results available."
-        
-        # Combine summaries intelligently
-        if len(summaries) <= 3:
-            combined = " ".join(summaries)
-        else:
-            # Use first, middle, and last summaries
-            combined = f"{summaries[0]} ... {summaries[len(summaries)//2]} ... {summaries[-1]}"
-        
-        if len(combined) > 600:
-            combined = combined[:600] + "..."
-        
-        return combined
-    
-    def _create_error_result(self, pages: List[int], error_msg: str) -> Dict[str, Any]:
-        """Create error result when processing cannot proceed."""
-        return {
-            "sm_id": self.sm_id,
-            "role": self.role,
-            "assigned_sections": self.sections,
-            "page_range": self.pages,
-            "num_workers": 0,
-            "results": [
-                {"page": p, "error": error_msg, "summary": f"[ERROR: {error_msg}]", 
-                 "status": "error", "entities": [], "keywords": []}
-                for p in pages
-            ],
-            "total_pages": len(pages),
-            "total_chars": 0,
-            "total_entities": 0,
-            "total_keywords": 0,
-            "llm_successes": 0,
-            "llm_failures": len(pages),
-            "aggregate_summary": f"Processing failed: {error_msg}",
-            "elapsed_time": 0
-        }

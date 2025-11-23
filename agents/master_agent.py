@@ -14,19 +14,16 @@ from utils.llm_helper import LLMProcessor
 from pymongo import MongoClient
 import time
 
-
 load_dotenv()
 logger = get_logger("MasterAgent")
 
 class MasterAgent:
     """MasterAgent generates SubMaster execution plans with user feedback."""
     
-
     def __init__(self, model=None, temperature=0.3):
         self.id = f"MA-{uuid.uuid4().hex[:6].upper()}"
         self.logger = logger
         
-        # Use Mistral Small by default
         model = model or os.getenv("LLM_MODEL", "mistral-small-latest")
         
         self.llm = LLMProcessor(
@@ -36,7 +33,6 @@ class MasterAgent:
             caller_id=self.id
         )
         
-    
         self.mongo_client = None
         self.mongo_db = None
         self.mongo_coll = None
@@ -50,6 +46,7 @@ class MasterAgent:
 
             if uri:
                 self.mongo_client = MongoClient(uri)
+                # if db_name is None this will raise; leaving behavior unchanged
                 self.mongo_db = self.mongo_client[db_name]
                 self.mongo_coll = self.mongo_db[coll_name]
                 self.mongo_metadata_coll = self.mongo_db[metadata_coll_name]
@@ -65,8 +62,6 @@ class MasterAgent:
         self.logger.info(f"[INIT] Master Agent {self.id} initialized with model {model}.")
     
     def extract_json(self, text: str) -> dict:
-        """Extract JSON from LLM response."""
-        # Remove markdown if present
         text = text.strip()
         if text.startswith("```"):
             lines = text.split("\n")
@@ -84,24 +79,20 @@ class MasterAgent:
             raise
     
     def estimate_submasters_needed(self, metadata: dict) -> int:
-        """Estimate number of SubMasters based on document characteristics."""
         pages = metadata.get("num_pages", 10)
         complexity = metadata.get("complexity_level", "medium").lower()
         
         base = metadata.get("max_parallel_submasters", 2)
         
-        # Adjust based on page count
         if pages > 50:
             base = min(base + 1, 4)
         
-        # Adjust based on complexity
         if complexity == "high":
             base = min(base + 1, 4)
         
         return base
     
     def ask_llm_for_plan(self, user_request: str, metadata: dict):
-        """Generate SubMaster plan based on sections."""
         num_submasters = self.estimate_submasters_needed(metadata)
         num_pages = metadata.get("num_pages", 100)
         sections = metadata.get("sections", {})
@@ -130,39 +121,34 @@ CRITICAL CONSTRAINTS:
 - ALL page ranges MUST be within [1, {num_pages}]
 - Divide the document among {num_submasters} SubMasters
 - Each SubMaster should handle 1+ sections logically
-- Each SubMaster needs a distinct role (e.g., "Summarize Abstract and Introduction", "Extract entities from Methodology")
-- page_range format: [start1, end1, start2, end2, ...] for multiple ranges OR [start, end] for single range
+- Each SubMaster needs a distinct role
+- page_range format: [start, end] or multiple pairs
 
 Respond ONLY in valid JSON:
 {{
   "num_submasters": {num_submasters},
-  "distribution_strategy": "Brief explanation of how sections are distributed and why",
+  "distribution_strategy": "Brief explanation",
   "submasters": [
     {{
       "submaster_id": "SM-001",
-      "role": "Summarize Abstract and Introduction sections for overview",
+      "role": "Summarize Abstract and Introduction",
       "assigned_sections": ["Abstract", "Introduction"],
       "page_range": [1, 2],
       "estimated_workload": "medium"
     }}
   ]
 }}
-
-ENSURE all page numbers are valid before responding.
 """
         
-        # FIXED: Use rate-limited LLMProcessor instead of direct call
         try:
             response_text = self.llm.call_with_retry(prompt, parse_json=False)
             plan = self.extract_json(response_text)
         except RuntimeError as e:
-            # Daily quota exceeded
             self.logger.error(f"Daily quota exceeded: {e}")
             raise RuntimeError(
                 "Daily API quota exceeded. Please wait 24 hours or upgrade to paid tier."
             ) from e
         
-        # Add unique IDs if missing
         for sm in plan.get("submasters", []):
             if "submaster_id" not in sm:
                 sm["submaster_id"] = f"SM-{uuid.uuid4().hex[:6].upper()}"
@@ -170,7 +156,6 @@ ENSURE all page numbers are valid before responding.
         return plan
     
     def validate_plan(self, plan: Dict[str, Any], metadata: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate plan has valid page ranges."""
         num_pages = metadata.get("num_pages", 100)
         errors = []
         
@@ -187,7 +172,6 @@ ENSURE all page numbers are valid before responding.
                 errors.append(f"{sm_id}: Invalid page_range format: {page_range}")
                 continue
             
-            # Check each (start, end) pair
             for i in range(0, len(page_range), 2):
                 start = page_range[i]
                 end = page_range[i + 1]
@@ -205,19 +189,16 @@ ENSURE all page numbers are valid before responding.
         return {"valid": True, "errors": []}
     
     def feedback_loop(self, metadata: dict):
-        """Interactive loop until user approves plan."""
         self.logger.info("[START] Entering feedback loop...")
         
         goal = metadata.get("user_notes", "Process the document according to standard workflow.")
         
-        # Generate initial plan
-        print("\n📋 Generating SubMaster execution plan...")
+        print("\nGenerating SubMaster execution plan...")
         
         try:
             plan = self.ask_llm_for_plan(goal, metadata)
         except RuntimeError as e:
-            # Daily quota exceeded
-            print(f"\n❌ {str(e)}")
+            print(f"\n{str(e)}")
             return {"status": "quota_exceeded", "error": str(e)}
         
         max_attempts = 5
@@ -226,51 +207,48 @@ ENSURE all page numbers are valid before responding.
         while attempts < max_attempts:
             attempts += 1
             
-            # Validate plan
             validation = self.validate_plan(plan, metadata)
             if not validation["valid"]:
-                print(f"\n⚠️ Plan validation errors (attempt {attempts}/{max_attempts}):")
+                print(f"\nPlan validation errors (attempt {attempts}):")
                 for error in validation["errors"]:
-                    print(f"   ❌ {error}")
+                    print(f"   {error}")
                 
                 if attempts >= max_attempts:
-                    print("\n❌ Max validation attempts reached. Please check metadata.")
+                    print("\nMax validation attempts reached. Please check metadata.")
                     return {"status": "validation_failed", "errors": validation["errors"]}
                 
-                print("\n🔄 Regenerating plan...")
+                print("\nRegenerating plan...")
                 fix_prompt = f"""
 Previous plan had errors:
 {chr(10).join(f"- {e}" for e in validation["errors"])}
 
-CRITICAL: PDF has {metadata.get('num_pages')} pages. All ranges MUST be [1, {metadata.get('num_pages')}].
+PDF has {metadata.get('num_pages')} pages. All ranges must be valid.
 Generate corrected plan.
 """
                 try:
                     plan = self.ask_llm_for_plan(goal + "\n\n" + fix_prompt, metadata)
                 except RuntimeError as e:
-                    print(f"\n❌ {str(e)}")
+                    print(f"\n{str(e)}")
                     return {"status": "quota_exceeded", "error": str(e)}
                 continue
             
-            # Display plan
-            print("\n📋 Proposed SubMaster Plan:\n")
+            print("\nProposed SubMaster Plan:\n")
             print(json.dumps(plan, indent=2))
             
-            # Check if feedback is required
             if not metadata.get("feedback_required", True):
-                print("\n✅ Auto-approving plan (feedback_required=False)")
+                print("\nAuto approving plan")
                 plan["status"] = "approved"
                 return plan
             
-            approval = input("\n✅ Approve this plan? (yes/no): ").strip().lower()
+            approval = input("\nApprove this plan? (yes/no): ").strip().lower()
             if approval in ["yes", "y"]:
                 self.logger.info("User approved the plan.")
                 plan["status"] = "approved"
                 return plan
             
-            feedback = input("\n📝 What would you like to change?\n> ").strip()
+            feedback = input("\nWhat would you like to change?\n> ").strip()
             if not feedback:
-                print("\n⚠️ No feedback provided. Please specify changes.")
+                print("\nNo feedback provided. Please specify changes.")
                 continue
             
             self.logger.info(f"User feedback: {feedback}")
@@ -284,94 +262,148 @@ CURRENT PLAN:
 USER FEEDBACK:
 {feedback}
 
-Revise the plan accordingly. Keep the same JSON structure.
+Revise the plan. Keep JSON structure unchanged.
 """
             try:
                 plan = self.ask_llm_for_plan(revised_prompt, metadata)
             except RuntimeError as e:
-                print(f"\n❌ {str(e)}")
+                print(f"\n{str(e)}")
                 return {"status": "quota_exceeded", "error": str(e)}
         
-        print("\n⚠️ Max attempts reached without approval.")
+        print("\nMax attempts reached without approval.")
         return None
-    
+
+    # ----------------------------------------------------
+    # FIXED FUNCTION: use explicit None check and JSON safe
+    # ----------------------------------------------------
     def save_plan_to_mongo(self, plan: dict, metadata: dict):
-        """Save plan to MongoDB."""
-        if not self.mongo_coll:
+        if self.mongo_coll is None:
             self.logger.warning("MongoDB not configured. Cannot save plan.")
             return
 
         try:
+            safe_plan = json.loads(json.dumps(plan))
+            safe_metadata = json.loads(json.dumps(metadata))
+
             doc = {
                 "master_id": self.id,
                 "timestamp": time.time(),
-                "plan": plan,
-                "metadata": metadata
+                "plan": safe_plan,
+                "metadata": safe_metadata
             }
             self.mongo_coll.insert_one(doc)
             self.logger.info("[MONGO] Plan saved to MongoDB")
         except Exception as e:
             self.logger.error(f"[MONGO] Failed to save plan: {e}")
-    
+
+    # ----------------------------------------------------
+    # FIXED FUNCTION: explicit None check and JSON safe
+    # ----------------------------------------------------
     def save_metadata_to_mongo(self, metadata: dict):
-        """Save metadata to MongoDB."""
         if self.mongo_metadata_coll is None:
-            self.logger.warning("MongoDB metadata collection not configured. Skipping save.")
+            self.logger.warning("MongoDB metadata collection not configured.")
             return
 
         try:
+            safe_metadata = json.loads(json.dumps(metadata))
             doc = {
                 "master_id": self.id,
                 "timestamp": time.time(),
-                "metadata": metadata
+                "metadata": safe_metadata
             }
             self.mongo_metadata_coll.insert_one(doc)
             self.logger.info("[MONGO] Metadata saved to MongoDB")
         except Exception as e:
             self.logger.error(f"[MONGO] Failed to save metadata: {e}")
-    
+
+    # ----------------------------------------------------
+    # FIXED FUNCTION: always saves plan (except None)
+    # ----------------------------------------------------
     def execute(self, metadata_path: str, save_path: str = None):
-        """Run orchestration and save final plan."""
         try:
-            with open(metadata_path, "r", encoding="utf-8") as f:
+            with open(metadata_path, "r", encoding="utf8") as f:
                 metadata = json.load(f)
-                self.save_metadata_to_mongo(metadata)
         except Exception as e:
             self.logger.error(f"Failed to load metadata: {e}")
             return None
 
+        # Prompt user for high level intent and document context and merge into metadata
+        try:
+            print("\nPlease provide a brief high level intent for this document (example: 'Summarize for a presentation'):")
+            high_level_intent = input("> ").strip()
+            if high_level_intent:
+                metadata["high_level_intent"] = high_level_intent
+
+            print("\nProvide any document context the user wants to add (example: 'this paper is about how ai is as good at reasoning as humans'):")
+            user_doc_context = input("> ").strip()
+            if user_doc_context:
+                metadata["user_document_context"] = user_doc_context
+
+            # Add a metadata update timestamp
+            metadata["metadata_updated_at"] = time.time()
+
+            # Save enriched metadata back to disk and to Mongo
+            try:
+                with open(metadata_path, "w", encoding="utf8") as f:
+                    json.dump(metadata, f, indent=2)
+                self.logger.info(f"Enriched metadata written to {metadata_path}")
+            except Exception as e:
+                self.logger.error(f"Failed to write enriched metadata to disk: {e}")
+
+            # Save metadata to mongo
+            try:
+                self.save_metadata_to_mongo(metadata)
+            except Exception as e:
+                self.logger.error(f"Failed to save metadata to MongoDB: {e}")
+
+        except Exception as e:
+            self.logger.error(f"Failed to enrich metadata with user inputs: {e}")
+
         self.logger.info(f"[EXEC] Processing: {metadata.get('file_name')}")
         plan = self.feedback_loop(metadata)
 
-        if plan is None or plan.get("status") not in ["approved", "quota_exceeded"]:
-            return plan
+        if plan is None:
+            self.logger.error("No plan returned from feedback loop")
+            return None
 
-        if plan.get("status") == "quota_exceeded":
-            return plan
+        # attach master summary into metadata and persist again
+        try:
+            master_summary = plan.get("distribution_strategy", "")
+            if master_summary:
+                metadata["master_summary"] = master_summary
+                metadata["metadata_updated_at"] = time.time()
+                # save updated metadata to disk
+                try:
+                    with open(metadata_path, "w", encoding="utf8") as f:
+                        json.dump(metadata, f, indent=2)
+                    self.logger.info(f"Updated metadata with master_summary written to {metadata_path}")
+                except Exception as e:
+                    self.logger.error(f"Failed to write updated metadata to disk: {e}")
 
-        # Determine save path
+                # save updated metadata to mongo
+                try:
+                    self.save_metadata_to_mongo(metadata)
+                except Exception as e:
+                    self.logger.error(f"Failed to save updated metadata to MongoDB: {e}")
+        except Exception as e:
+            self.logger.error(f"Failed to attach master_summary into metadata: {e}")
+
         if save_path is None:
             save_path = os.path.join(os.path.dirname(metadata_path), "submasters_plan.json")
 
-        # Save plan to local JSON
         try:
-            with open(save_path, "w", encoding="utf-8") as f:
+            with open(save_path, "w", encoding="utf8") as f:
                 json.dump(plan, f, indent=2)
-            self.logger.info(f"Final plan saved: {save_path}")
+            self.logger.info(f"Final plan saved locally to: {save_path}")
         except Exception as e:
             self.logger.error(f"Failed to save plan locally: {e}")
-            return None
 
-        # Save plan to MongoDB
         try:
             self.save_plan_to_mongo(plan, metadata)
         except Exception as e:
-            self.logger.error(f"Failed to save plan to MongoDB: {e}")
+            self.logger.error(f"MongoDB insert failed: {e}")
 
-        print("\n✅ Final Approved Plan:")
-        print(json.dumps(plan, indent=2))
-        print(f"\n📁 Plan saved: {save_path}")
-
+        print("\nCompleted. Final plan stored locally and in MongoDB")
         return plan
 
 
@@ -379,9 +411,8 @@ if __name__ == "__main__":
     import sys
     
     agent = MasterAgent()
-    print("\n--- MASTER AGENT ONLINE ---\n")
+    print("\nMASTER AGENT ONLINE\n")
     
-    # Parse command-line argument
     if len(sys.argv) < 2:
         print("Usage: python -m agents.master_agent <metadata_file_path>")
         sys.exit(1)
