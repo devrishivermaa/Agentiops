@@ -1,0 +1,73 @@
+{
+  "SM-001": {
+    "status": "ok",
+    "output": {
+      "sm_id": "SM-001",
+      "status": "completed",
+      "elapsed": 9.708150863647461,
+      "output": {
+        "role": "Summarize Abstract and Introduction",
+        "assigned_sections": [
+          "Abstract",
+          "Introduction"
+        ],
+        "page_range": [
+          1,
+          6
+        ],
+        "total_pages": 6,
+        "context_usage": "6/6",
+        "results": [
+          {
+            "page": 1,
+            "section": "Abstract",
+            "text_preview": "Preprint. Under Review\nDOAI MODELSPERFORMHUMAN-LIKEABSTRACT\nREASONINGACROSSMODALITIES?\nClaas Beger\nSanta Fe Institute\nclaasbeger@santafe.edu\nRyan Yi\nSanta Fe Institute\nryi@santafe.edu\nShuhao Fu\nSanta Fe Institute\nfushuhao@santafe.edu\nArseny Moskvichev\nAdvanced Micro Devices, Inc.\narseny.moskvichev@g...",
+            "char_count": 3336,
+            "worker_id": "SM-001-W1",
+            "global_context_used": true,
+            "summary": "The paper investigates whether AI models, particularly OpenAI's o3-preview, can perform human-like abstract reasoning across different modalities (textual and visual) and under varying conditions. Using the ConceptARC benchmark, the study evaluates models' accuracy and the quality of their generated rules, revealing that while some models match human accuracy, they often rely on surface-level shortcuts rather than intended abstractions. The results suggest that accuracy alone may overestimate AI's abstract reasoning in textual tasks and underestimate it in visual tasks, highlighting the need for a more nuanced evaluation framework.",
+            "entities": [
+              "OpenAI",
+              "o3-preview",
+              "ARC-AGI",
+              "ConceptARC",
+              "Santa Fe Institute",
+              "Advanced Micro Devices, Inc.",
+              "Sandia National Laboratories",
+              "Claas Beger",
+              "Ryan Yi",
+              "Shuhao Fu",
+              "Arseny Moskvichev",
+              "Sarah W. Tsai",
+              "Sivasankaran Rajamanickam",
+              "Melanie Mitchell"
+            ],
+            "keywords": [
+              "abstract reasoning",
+              "AI models",
+              "ConceptARC",
+              "multimodal reasoning",
+              "accuracy evaluation",
+              "surface-level shortcuts",
+              "human-like reasoning",
+              "textual modality",
+              "visual modality",
+              "rule-level analysis"
+            ],
+            "key_points": [
+              "AI models may over-rely on surface-level patterns for abstract reasoning.",
+              "Accuracy alone can misrepresent AI's abstract reasoning capabilities.",
+              "Visual modality tasks show a drop in AI model accuracy but still exhibit some abstract reasoning.",
+              "The study proposes a more nuanced evaluation framework for abstract reasoning."
+            ],
+            "technical_terms": [
+              "ARC-AGI",
+              "ConceptARC",
+              "multimodal reasoning",
+              "rule-level analysis",
+              "few-shot rule-induction",
+              "analogical reasoning"
+            ],
+            "status": "success",
+            "processing_time": 4.554495573043823,
+            "_id": 

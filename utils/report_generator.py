@@ -275,7 +275,7 @@ class PDFReportGenerator:
 
 def save_results_as_json(results: Dict[str, Any], path: str) -> str:
     with open(path, "w", encoding="utf8") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
+        json.dump(results, f, indent=2, ensure_ascii=False, default=str)
     logger.info(f"Saved JSON: {path}")
     return path
 
