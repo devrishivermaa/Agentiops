@@ -1,8 +1,8 @@
-import React from 'react';
-import { motion } from 'framer-motion';
-import { AgentNode } from '../../types';
-import { AgentCard } from './AgentCard';
-import { BranchConnector } from './TreeConnector';
+import React from "react";
+import { motion } from "framer-motion";
+import { AgentNode, AgentStatus } from "../../types";
+import { AgentCard } from "./AgentCard";
+import { BranchConnector } from "./TreeConnector";
 
 interface TreeNodeProps {
   node: AgentNode;
@@ -11,61 +11,115 @@ interface TreeNodeProps {
   depth?: number;
 }
 
-export const TreeNode: React.FC<TreeNodeProps> = ({ node, allAgents, onSelect, depth = 0 }) => {
+export const TreeNode: React.FC<TreeNodeProps> = ({
+  node,
+  allAgents,
+  onSelect,
+  depth = 0,
+}) => {
   // Find children
-  const children = allAgents.filter(a => a.parentId === node.id);
+  const children = allAgents.filter((a) => a.parentId === node.id);
   const hasChildren = children.length > 0;
+
+  // Check if any children are active
+  const hasActiveChildren = children.some(
+    (c) => c.status === AgentStatus.PROCESSING
+  );
 
   return (
     <div className="flex flex-col items-center relative">
       <AgentCard agent={node} onClick={onSelect} />
-      
+
       {hasChildren && (
         <>
           {/* Vertical line down from parent */}
-          <div className="h-8 w-full relative">
-             <BranchConnector type="vertical" />
-          </div>
+          <motion.div
+            initial={{ scaleY: 0 }}
+            animate={{ scaleY: 1 }}
+            transition={{ duration: 0.3 }}
+            className={`w-0.5 h-8 origin-top rounded-full ${
+              hasActiveChildren
+                ? "bg-gradient-to-b from-blue-500/60 to-blue-500/30"
+                : "bg-zinc-700/40"
+            }`}
+          />
 
-          <div className="flex relative pt-4">
-             {/* Horizontal connector bar logic handled by children wrappers */}
-             {children.map((child, index) => {
-               const isFirst = index === 0;
-               const isLast = index === children.length - 1;
-               const isOnly = children.length === 1;
+          {/* Children row */}
+          <div className="flex relative">
+            {/* Children container */}
+            {children.map((child, index) => {
+              const isChildActive = child.status === AgentStatus.PROCESSING;
+              const isFirst = index === 0;
+              const isLast = index === children.length - 1;
+              const isOnly = children.length === 1;
 
-               return (
-                 <div key={child.id} className="flex flex-col items-center relative px-2 md:px-4">
-                   {/* Top connectors for children */}
-                   <div className="absolute top-0 left-0 right-0 h-4">
-                     {!isOnly && (
-                       <>
-                         {/* Left line (if not first) */}
-                         {!isFirst && <div className="absolute top-0 left-0 w-1/2 h-full border-t-2 border-zinc-700/50 rounded-tl-xl" />}
-                         {/* Right line (if not last) */}
-                         {!isLast && <div className="absolute top-0 right-0 w-1/2 h-full border-t-2 border-zinc-700/50 rounded-tr-xl" />}
-                       </>
-                     )}
-                     {/* Vertical connection to node */}
-                     <div className="absolute top-0 left-1/2 -ml-px w-0.5 h-4 bg-zinc-700/50">
-                        {/* Data Flow Animation down to child */}
-                        <motion.div 
-                           className="absolute top-0 left-0 w-full h-[50%] bg-blue-400"
-                           animate={{ top: ['-100%', '200%'], opacity: [0, 1, 0] }}
-                           transition={{ duration: 2, repeat: Infinity, delay: index * 0.2 }}
+              return (
+                <div
+                  key={child.id}
+                  className="flex flex-col items-center relative px-4 md:px-6"
+                >
+                  {/* Horizontal connectors at top */}
+                  {!isOnly && (
+                    <>
+                      {/* Left half of horizontal line */}
+                      {!isFirst && (
+                        <div
+                          className={`absolute top-0 right-1/2 h-0.5 w-1/2 ${
+                            hasActiveChildren
+                              ? "bg-blue-500/50"
+                              : "bg-zinc-700/40"
+                          }`}
                         />
-                     </div>
-                   </div>
-                   
-                   <TreeNode 
-                     node={child} 
-                     allAgents={allAgents} 
-                     onSelect={onSelect}
-                     depth={depth + 1}
-                   />
-                 </div>
-               );
-             })}
+                      )}
+                      {/* Right half of horizontal line */}
+                      {!isLast && (
+                        <div
+                          className={`absolute top-0 left-1/2 h-0.5 w-1/2 ${
+                            hasActiveChildren
+                              ? "bg-blue-500/50"
+                              : "bg-zinc-700/40"
+                          }`}
+                        />
+                      )}
+                    </>
+                  )}
+
+                  {/* Vertical drop to child */}
+                  <motion.div
+                    initial={{ scaleY: 0 }}
+                    animate={{ scaleY: 1 }}
+                    transition={{ duration: 0.3, delay: 0.1 + index * 0.05 }}
+                    className={`w-0.5 h-6 origin-top rounded-full relative ${
+                      isChildActive
+                        ? "bg-gradient-to-b from-blue-500/60 to-blue-500/30"
+                        : "bg-zinc-700/40"
+                    }`}
+                  >
+                    {/* Animated data flow pulse */}
+                    <motion.div
+                      className={`absolute left-0 w-full h-2 rounded-full ${
+                        isChildActive ? "bg-blue-400" : "bg-primary/50"
+                      }`}
+                      initial={{ top: "-50%", opacity: 0 }}
+                      animate={{ top: ["0%", "100%"], opacity: [0, 0.8, 0] }}
+                      transition={{
+                        duration: 1.5,
+                        repeat: Infinity,
+                        delay: index * 0.3,
+                        ease: "easeInOut",
+                      }}
+                    />
+                  </motion.div>
+
+                  <TreeNode
+                    node={child}
+                    allAgents={allAgents}
+                    onSelect={onSelect}
+                    depth={depth + 1}
+                  />
+                </div>
+              );
+            })}
           </div>
         </>
       )}
