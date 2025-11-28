@@ -38,15 +38,24 @@ export const AgentVisualization: React.FC = () => {
   const lastMousePosition = useRef({ x: 0, y: 0 });
 
   const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+
     if (e.ctrlKey || e.metaKey) {
+      // Zoom with Ctrl/Cmd + scroll
       const scaleSensitivity = 0.001;
       const newScale = Math.min(
         Math.max(0.1, transform.scale - e.deltaY * scaleSensitivity),
         5
       );
       setTransform((prev) => ({ ...prev, scale: newScale }));
+    } else if (e.shiftKey) {
+      // Horizontal scroll with Shift + scroll wheel
+      setTransform((prev) => ({
+        ...prev,
+        x: prev.x - e.deltaY,
+      }));
     } else {
-      // Pan with wheel
+      // Pan with wheel (supports both horizontal and vertical)
       setTransform((prev) => ({
         ...prev,
         x: prev.x - e.deltaX,

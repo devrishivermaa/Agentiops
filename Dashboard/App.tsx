@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useStore } from "./store";
 import { AgentVisualization } from "./components/AgentVisualization";
 import { EventLog } from "./components/EventLog";
-import { FileUploader } from "./components/FileUploader";
+import { NewPipelinePage } from "./components/NewPipelinePage";
 import {
   LayoutDashboard,
   Settings,
@@ -172,32 +172,26 @@ export default function App() {
           </div>
 
           <div className="flex gap-4">
-            {!wsConnected && activeTab === "upload" && (
-              <button
-                onClick={handleSimulate}
-                className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-4 py-2 rounded-md text-sm border border-zinc-700 transition-colors"
-              >
-                <Play size={14} />
-                Run Simulation
-              </button>
-            )}
+            {/* Additional header actions can go here */}
           </div>
         </header>
 
         {/* Viewport */}
         <div className="flex-1 overflow-hidden flex flex-col md:flex-row relative">
-          <div className="flex-1 relative overflow-hidden bg-[url('https://grainy-gradients.vercel.app/noise.svg')] bg-opacity-5">
+          <div className="flex-1 relative overflow-hidden">
             {activeTab === "upload" && (
-              <FileUploader
+              <NewPipelinePage
                 onUpload={handleUpload}
+                onSimulate={handleSimulate}
                 isProcessing={pipeline.status === "running"}
+                isConnected={wsConnected}
               />
             )}
             {activeTab === "dashboard" && <AgentVisualization />}
           </div>
 
-          {/* Event Log Panel */}
-          <EventLog />
+          {/* Event Log Panel - only show in dashboard */}
+          {activeTab === "dashboard" && <EventLog />}
         </div>
       </main>
     </div>
