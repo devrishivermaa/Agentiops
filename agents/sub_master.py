@@ -6,24 +6,44 @@ SubMaster coordinates Worker Agents to process document sections.
 import time
 import uuid
 import ray
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from utils.logger import get_logger
 from utils.pdf_extractor import PDFExtractor
 from agents.worker_agent import WorkerAgent
 
+# Import event emission (optional - graceful fallback if API not available)
+try:
+    from api.events import EventType, event_bus
+    EVENTS_ENABLED = True
+except ImportError:
+    EVENTS_ENABLED = False
+
 logger = get_logger("SubMaster")
+
+
+def emit_event(event_type, pipeline_id, data=None, agent_id=None, agent_type=None):
+    """Emit event if API layer is available."""
+    if EVENTS_ENABLED and pipeline_id:
+        try:
+            event_bus.emit_simple(
+                event_type, pipeline_id, data or {}, agent_id=agent_id, agent_type=agent_type
+            )
+        except Exception as e:
+            logger.debug(f"Event emission failed: {e}")
+
 
 @ray.remote
 class SubMaster:
     """SubMaster coordinates Worker Agents to process document sections."""
     
-    def __init__(self, plan_piece, metadata):
+    def __init__(self, plan_piece, metadata, pipeline_id: Optional[str] = None):
         self.sm_id = plan_piece.get("submaster_id", f"SM-{uuid.uuid4().hex[:6].upper()}")
         self.role = plan_piece.get("role", "generic")
         self.sections = plan_piece.get("assigned_sections", [])
         self.pages = plan_piece.get("page_range", [1, 1])
         self.meta = metadata
         self.status = "initialized"
+        self.pipeline_id = pipeline_id  # For event emission
         
         # Get PDF path from metadata
         self.pdf_path = metadata.get("file_path", "")
@@ -74,11 +94,22 @@ class SubMaster:
                 worker = WorkerAgent.remote(
                     worker_id=worker_id,
                     llm_model=self.llm_model,
-                    processing_requirements=self.processing_requirements
+                    processing_requirements=self.processing_requirements,
+                    pipeline_id=self.pipeline_id,
+                    submaster_id=self.sm_id
                 )
                 
                 self.workers.append(worker)
                 logger.debug(f"[{self.sm_id}] Spawned worker: {worker_id}")
+                
+                # Emit worker spawn event
+                emit_event(
+                    EventType.WORKER_SPAWNED,
+                    self.pipeline_id,
+                    {"worker_id": worker_id, "submaster_id": self.sm_id},
+                    agent_id=worker_id,
+                    agent_type="worker",
+                )
             
             # Initialize all workers
             init_results = ray.get([w.initialize.remote() for w in self.workers])
@@ -166,10 +197,12 @@ class SubMaster:
         logger.info(f"[{self.sm_id}] Submitted {len(page_futures)} page tasks to workers")
         
         # Collect results as they complete
+        completed_pages = 0
         for page_num, future in page_futures:
             try:
                 page_result = ray.get(future)
                 output.append(page_result)
+                completed_pages += 1
                 
                 # Update statistics
                 if page_result.get("status") == "success":
@@ -178,6 +211,21 @@ class SubMaster:
                     total_keywords += len(page_result.get("keywords", []))
                 else:
                     llm_failures += 1
+                
+                # Emit progress event
+                emit_event(
+                    EventType.SUBMASTER_PROGRESS,
+                    self.pipeline_id,
+                    {
+                        "current_page": completed_pages,
+                        "total_pages": len(page_futures),
+                        "progress_percent": round((completed_pages / len(page_futures)) * 100, 1),
+                        "page_num": page_num,
+                        "worker_id": page_result.get("worker_id"),
+                    },
+                    agent_id=self.sm_id,
+                    agent_type="submaster",
+                )
                 
                 logger.debug(f"[{self.sm_id}] ✅ Completed page {page_num}")
                 
