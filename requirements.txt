@@ -1,0 +1,32 @@
+# ==================== Core Framework ====================
+fastapi>=0.115.0
+uvicorn>=0.31.0
+pydantic>=2.9.2
+python-dotenv>=1.0.1
+
+# ==================== File Upload ====================
+python-multipart>=0.0.9
+
+# ==================== Distributed Processing ====================
+ray>=2.10.0
+
+# ==================== LLM & AI ====================
+langchain>=0.3.7
+langchain-core>=0.3.16
+langgraph>=0.2.28
+langchain-google-genai>=2.0.2
+openai>=1.0.0
+mistralai>=1.0.0
+
+# ==================== Document Processing ====================
+pypdf>=5.0.1
+reportlab>=4.2.5
+markdown>=3.7
+
+# ==================== Storage ====================
+redis>=5.1.1
+pymongo>=4.9.2
+chromadb>=0.5.15
+
+# ==================== WebSocket (optional, for enhanced WS support) ====================
+websockets>=12.0

@@ -1,0 +1,333 @@
+# agents/sub_master.py
+"""
+SubMaster coordinates Worker Agents to process document sections.
+"""
+
+import time
+import uuid
+import ray
+from typing import Dict, Any, List, Optional
+from utils.logger import get_logger
+from utils.pdf_extractor import PDFExtractor
+from agents.worker_agent import WorkerAgent
+
+# Import event emission (optional - graceful fallback if API not available)
+try:
+    from api.events import EventType, event_bus
+    EVENTS_ENABLED = True
+except ImportError:
+    EVENTS_ENABLED = False
+
+logger = get_logger("SubMaster")
+
+
+def emit_event(event_type, pipeline_id, data=None, agent_id=None, agent_type=None):
+    """Emit event if API layer is available."""
+    if EVENTS_ENABLED and pipeline_id:
+        try:
+            event_bus.emit_simple(
+                event_type, pipeline_id, data or {}, agent_id=agent_id, agent_type=agent_type
+            )
+        except Exception as e:
+            logger.debug(f"Event emission failed: {e}")
+
+
+@ray.remote
+class SubMaster:
+    """SubMaster coordinates Worker Agents to process document sections."""
+    
+    def __init__(self, plan_piece, metadata, pipeline_id: Optional[str] = None):
+        self.sm_id = plan_piece.get("submaster_id", f"SM-{uuid.uuid4().hex[:6].upper()}")
+        self.role = plan_piece.get("role", "generic")
+        self.sections = plan_piece.get("assigned_sections", [])
+        self.pages = plan_piece.get("page_range", [1, 1])
+        self.meta = metadata
+        self.status = "initialized"
+        self.pipeline_id = pipeline_id  # For event emission
+        
+        # Get PDF path from metadata
+        self.pdf_path = metadata.get("file_path", "")
+        if not self.pdf_path:
+            logger.error(f"[{self.sm_id}] No file_path in metadata!")
+        
+        # Get processing requirements
+        self.processing_requirements = metadata.get("processing_requirements", [])
+        
+
+        # Get LLM config
+        self.llm_model = metadata.get("preferred_model", "mistral-small-latest")
+
+
+        
+        # Worker configuration
+        self.num_workers_per_submaster = metadata.get("num_workers_per_submaster", 3)
+        self.pdf_extractor = None
+        self.workers = []
+        
+        logger.info(
+            f"[{self.sm_id}] Initialized: role={self.role}, pages={self.pages}, "
+            f"workers={self.num_workers_per_submaster}, model={self.llm_model}"
+        )
+    
+    def initialize(self):
+        """Initialize PDF extractor and spawn Worker Agents."""
+        self.status = "ready"
+        
+        # Initialize PDF extractor
+        try:
+            if self.pdf_path:
+                self.pdf_extractor = PDFExtractor(self.pdf_path)
+                logger.info(f"[{self.sm_id}] PDF extractor initialized: {self.pdf_extractor.num_pages} pages")
+            else:
+                logger.warning(f"[{self.sm_id}] No PDF path provided")
+        except Exception as e:
+            logger.error(f"[{self.sm_id}] Failed to initialize PDF extractor: {e}")
+            self.pdf_extractor = None
+        
+        # Spawn Worker Agents
+        try:
+            logger.info(f"[{self.sm_id}] Spawning {self.num_workers_per_submaster} workers...")
+            
+            for i in range(self.num_workers_per_submaster):
+                worker_id = f"{self.sm_id}-W{i+1}"
+                
+                worker = WorkerAgent.remote(
+                    worker_id=worker_id,
+                    llm_model=self.llm_model,
+                    processing_requirements=self.processing_requirements,
+                    pipeline_id=self.pipeline_id,
+                    submaster_id=self.sm_id
+                )
+                
+                self.workers.append(worker)
+                logger.debug(f"[{self.sm_id}] Spawned worker: {worker_id}")
+                
+                # Emit worker spawn event
+                emit_event(
+                    EventType.WORKER_SPAWNED,
+                    self.pipeline_id,
+                    {"worker_id": worker_id, "submaster_id": self.sm_id},
+                    agent_id=worker_id,
+                    agent_type="worker",
+                )
+            
+            # Initialize all workers
+            init_results = ray.get([w.initialize.remote() for w in self.workers])
+            
+            success_count = sum(1 for r in init_results if r.get("status") == "ready")
+            logger.info(
+                f"[{self.sm_id}] Initialized {success_count}/{self.num_workers_per_submaster} workers"
+            )
+            
+        except Exception as e:
+            logger.error(f"[{self.sm_id}] Failed to initialize workers: {e}")
+            self.workers = []
+        
+        return {"sm_id": self.sm_id, "status": "ready", "num_workers": len(self.workers)}
+    
+    def process(self):
+        """Process assigned pages by delegating to Worker Agents."""
+        start_time = time.time()
+        self.status = "running"
+        output = []
+        
+        # Track statistics
+        total_chars_extracted = 0
+        total_entities = 0
+        total_keywords = 0
+        llm_successes = 0
+        llm_failures = 0
+        
+        # Handle multiple page ranges
+        if len(self.pages) % 2 != 0:
+            raise ValueError(f"Invalid page_range for {self.sm_id}: {self.pages}")
+        
+        # Collect all pages to process
+        all_pages = []
+        for i in range(0, len(self.pages), 2):
+            start, end = self.pages[i], self.pages[i + 1]
+            all_pages.extend(range(start, end + 1))
+        
+        logger.info(
+            f"[{self.sm_id}] Processing {len(all_pages)} pages "
+            f"({all_pages[0]}-{all_pages[-1]}) with {len(self.workers)} workers"
+        )
+        
+        if not self.pdf_extractor:
+            logger.error(f"[{self.sm_id}] No PDF extractor available")
+            return self._create_error_result(all_pages, "No PDF extractor")
+        
+        if not self.workers:
+            logger.error(f"[{self.sm_id}] No workers available")
+            return self._create_error_result(all_pages, "No workers")
+        
+        # Extract text for all pages first
+        try:
+            logger.info(f"[{self.sm_id}] Extracting text from pages...")
+            extracted_pages = self.pdf_extractor.extract_page_range(all_pages[0], all_pages[-1])
+            logger.info(f"[{self.sm_id}] ✅ Extracted {len(extracted_pages)} pages")
+        except Exception as e:
+            logger.error(f"[{self.sm_id}] Failed to extract pages: {e}")
+            return self._create_error_result(all_pages, f"Extraction failed: {e}")
+        
+        # Distribute pages to workers using Ray futures
+        page_futures = []
+        
+        for idx, page_num in enumerate(all_pages):
+            text = extracted_pages.get(page_num, "")
+            total_chars_extracted += len(text)
+            
+            # Round-robin worker assignment
+            worker_idx = idx % len(self.workers)
+            worker = self.workers[worker_idx]
+            
+            # Get section name for this page
+            section_name = self._get_section_for_page(page_num)
+            
+            # Submit page processing task to worker
+            future = worker.process_page.remote(
+                page_num=page_num,
+                text=text,
+                role=self.role,
+                section_name=section_name
+            )
+            
+            page_futures.append((page_num, future))
+        
+        logger.info(f"[{self.sm_id}] Submitted {len(page_futures)} page tasks to workers")
+        
+        # Collect results as they complete
+        completed_pages = 0
+        for page_num, future in page_futures:
+            try:
+                page_result = ray.get(future)
+                output.append(page_result)
+                completed_pages += 1
+                
+                # Update statistics
+                if page_result.get("status") == "success":
+                    llm_successes += 1
+                    total_entities += len(page_result.get("entities", []))
+                    total_keywords += len(page_result.get("keywords", []))
+                else:
+                    llm_failures += 1
+                
+                # Emit progress event
+                emit_event(
+                    EventType.SUBMASTER_PROGRESS,
+                    self.pipeline_id,
+                    {
+                        "current_page": completed_pages,
+                        "total_pages": len(page_futures),
+                        "progress_percent": round((completed_pages / len(page_futures)) * 100, 1),
+                        "page_num": page_num,
+                        "worker_id": page_result.get("worker_id"),
+                    },
+                    agent_id=self.sm_id,
+                    agent_type="submaster",
+                )
+                
+                logger.debug(f"[{self.sm_id}] ✅ Completed page {page_num}")
+                
+            except Exception as e:
+                logger.error(f"[{self.sm_id}] Worker failed on page {page_num}: {e}")
+                output.append({
+                    "page": page_num,
+                    "error": str(e),
+                    "summary": f"[ERROR: Worker failed on page {page_num}]",
+                    "status": "error",
+                    "entities": [],
+                    "keywords": []
+                })
+                llm_failures += 1
+        
+        # Sort results by page number
+        output.sort(key=lambda x: x.get("page", 0))
+        
+        self.status = "completed"
+        elapsed = time.time() - start_time
+        
+        # Generate aggregate summary
+        aggregate_summary = self._generate_aggregate_summary(output)
+        
+        logger.info(
+            f"[{self.sm_id}] ✅ Completed in {elapsed:.1f}s: "
+            f"{len(output)} pages, {total_chars_extracted:,} chars, "
+            f"{llm_successes} successes, {llm_failures} failures"
+        )
+        
+        return {
+            "sm_id": self.sm_id,
+            "role": self.role,
+            "assigned_sections": self.sections,
+            "page_range": self.pages,
+            "num_workers": len(self.workers),
+            "results": output,
+            "total_pages": len(output),
+            "total_chars": total_chars_extracted,
+            "total_entities": total_entities,
+            "total_keywords": total_keywords,
+            "llm_successes": llm_successes,
+            "llm_failures": llm_failures,
+            "aggregate_summary": aggregate_summary,
+            "elapsed_time": elapsed
+        }
+    
+    def _get_section_for_page(self, page_num: int) -> str:
+        """Determine which section a page belongs to."""
+        sections = self.meta.get("sections", {})
+        
+        for section_name, page_info in sections.items():
+            start = page_info.get("page_start", 0)
+            end = page_info.get("page_end", 0)
+            
+            if start <= page_num <= end:
+                return section_name
+        
+        return "Unknown"
+    
+    def _generate_aggregate_summary(self, results: list) -> str:
+        """Generate an overall summary from all page results."""
+        summaries = [
+            r.get("summary", "") 
+            for r in results 
+            if r.get("summary") and not r["summary"].startswith("[")
+        ]
+        
+        if not summaries:
+            return "No analysis results available."
+        
+        # Combine summaries intelligently
+        if len(summaries) <= 3:
+            combined = " ".join(summaries)
+        else:
+            # Use first, middle, and last summaries
+            combined = f"{summaries[0]} ... {summaries[len(summaries)//2]} ... {summaries[-1]}"
+        
+        if len(combined) > 600:
+            combined = combined[:600] + "..."
+        
+        return combined
+    
+    def _create_error_result(self, pages: List[int], error_msg: str) -> Dict[str, Any]:
+        """Create error result when processing cannot proceed."""
+        return {
+            "sm_id": self.sm_id,
+            "role": self.role,
+            "assigned_sections": self.sections,
+            "page_range": self.pages,
+            "num_workers": 0,
+            "results": [
+                {"page": p, "error": error_msg, "summary": f"[ERROR: {error_msg}]", 
+                 "status": "error", "entities": [], "keywords": []}
+                for p in pages
+            ],
+            "total_pages": len(pages),
+            "total_chars": 0,
+            "total_entities": 0,
+            "total_keywords": 0,
+            "llm_successes": 0,
+            "llm_failures": len(pages),
+            "aggregate_summary": f"Processing failed: {error_msg}",
+            "elapsed_time": 0
+        }
