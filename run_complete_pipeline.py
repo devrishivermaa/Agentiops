@@ -1,6 +1,13 @@
 """
 COMPLETE PIPELINE: Mapper → MasterAgent → ResidualAgent → SubMasters → Reducer → Merger → Reports
 Fully implements Architecture 1 with all 8 stages including ResidualAgent coordination.
+
+FIXED:
+- Safe None handling for global_context
+- Proper string slicing with type validation
+- Type checking before operations
+- Graceful degradation when components fail
+- MongoDB SSL errors handled
 """
 
 import os
@@ -11,10 +18,10 @@ from datetime import datetime
 from config import Config
 from workflows.mapper import Mapper
 from workflows.reducer import Reducer
+from workflows.merge_supervisor import MergeSupervisor
 from agents.master_agent import MasterAgent
 from agents.residual_agent import ResidualAgentActor
 from orchestrator import spawn_submasters_and_run
-from merger.merge_supervisor import MergeSupervisor
 from utils.report_generator import generate_analysis_report
 from utils.logger import get_logger
 
@@ -30,6 +37,37 @@ else:
     VECTOR_DB_AVAILABLE = False
 
 logger = get_logger("CompletePipeline")
+
+
+def safe_truncate(value, max_len=60, suffix='...'):
+    """
+    Safely truncate any value to string with max length.
+    
+    Args:
+        value: Any value (str, dict, list, None, etc.)
+        max_len: Maximum length before truncation
+        suffix: Suffix to add when truncated
+        
+    Returns:
+        Truncated string representation
+    """
+    if value is None:
+        return 'N/A'
+    
+    # Convert to string if not already
+    if not isinstance(value, str):
+        try:
+            value_str = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
+        except:
+            value_str = str(value)
+    else:
+        value_str = value
+    
+    # Truncate if needed
+    if len(value_str) > max_len:
+        return value_str[:max_len] + suffix
+    
+    return value_str
 
 
 def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str = None):
@@ -153,15 +191,38 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
         print(f"   📄 Pages: {summary['total_pages_processed']}")
         print(f"   🎯 LLM Success: {summary['llm_success_rate']:.1f}%")
         print(f"   ⏱️  Time: {summary['elapsed_time']:.2f}s")
-        print(f"   🤖 ResidualAgent: {'Used (v{})'.format(global_context.get('version', 1)) if residual_used else 'Not used'}")
+        
+        # FIXED: Safe context version extraction
+        context_version = global_context.get('version', 1) if isinstance(global_context, dict) else 0
+        print(f"   🤖 ResidualAgent: {'Used (v{})'.format(context_version) if residual_used else 'Not used'}")
         
         # Show global context summary if available
-        if residual_used and global_context:
+        if residual_used and isinstance(global_context, dict):
             print(f"\n🧠 Global Context Summary:")
-            print(f"   • Intent: {global_context.get('high_level_intent', 'N/A')[:60]}")
-            print(f"   • Strategy: {global_context.get('master_strategy', 'N/A')[:60]}")
-            print(f"   • Entities: {len(global_context.get('global_entities', []))}")
-            print(f"   • Keywords: {len(global_context.get('global_keywords', []))}")
+            
+            # FIXED: Safe display with helper function
+            def show_field(label, value, max_len=60):
+                """Display field safely with truncation"""
+                if not value:
+                    return
+                val_str = str(value) if not isinstance(value, str) else value
+                if len(val_str) > max_len:
+                    val_str = val_str[:max_len] + '...'
+                print(f"   • {label}: {val_str}")
+            
+            show_field("Intent", global_context.get('high_level_intent'))
+            show_field("Strategy", global_context.get('master_strategy'))
+            show_field("Context", global_context.get('document_context'))
+            
+            # FIXED: Safe list/dict extraction
+            entities = global_context.get('global_entities', [])
+            keywords = global_context.get('global_keywords', [])
+            section_overview = global_context.get('section_overview', {})
+            sections = section_overview.get('sections', []) if isinstance(section_overview, dict) else []
+            
+            print(f"   • Sections: {len(sections) if isinstance(sections, list) else 0}")
+            print(f"   • Global Entities: {len(entities) if isinstance(entities, list) else 0}")
+            print(f"   • Global Keywords: {len(keywords) if isinstance(keywords, list) else 0}")
         
     except Exception as e:
         print(f"\n❌ Orchestrator failed: {e}")
@@ -225,8 +286,15 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
         print(f"\n✅ Reducer completed")
         print(f"   📈 Unique Entities: {consolidated.get('total_unique_entities', 0)}")
         print(f"   🔑 Unique Keywords: {consolidated.get('total_unique_keywords', 0)}")
-        print(f"   📄 Pages Analyzed: {consolidated.get('total_pages', 0)}")
-        print(f"   💾 Output: {reduced_results.get('output_path')}")
+        
+        # FIXED: Safe access to processing_stats
+        processing_stats = reduced_results.get('processing_stats', {})
+        document_info = reduced_results.get('document', {})
+        total_pages = document_info.get('pages_processed', 0)
+        print(f"   📄 Pages Analyzed: {total_pages}")
+        
+        output_path = reduced_results.get('output_path', 'N/A')
+        print(f"   💾 Output: {output_path}")
         
     except Exception as e:
         print(f"\n❌ Reducer failed: {e}")
@@ -242,7 +310,6 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
         print("=" * 80)
         
         try:
-            # Import the quality validation ResidualAgent (not the Ray actor)
             from agents.residual_agent_validator import ResidualAgentValidator
             
             validator = ResidualAgentValidator(max_retries=3)
@@ -266,7 +333,7 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
                 for anomaly in anomalies[:3]:  # Show first 3
                     print(f"      • {anomaly['sm_id']}: {anomaly['type']} (severity: {anomaly['severity']})")
             
-            # Retry failed tasks if any
+            # Analyze failed tasks if any
             failed_tasks = [
                 {"task_id": sm_id, "error": r.get('error', 'Unknown')}
                 for sm_id, r in mapper_results.items()
@@ -274,14 +341,28 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
             ]
             
             if failed_tasks:
-                print(f"\n🔄 Retrying {len(failed_tasks)} failed tasks...")
-                retry_results = validator.retry_failed_tasks(failed_tasks, metadata)
-                recovered = sum(1 for r in retry_results if r['retry_status'] == 'recovered')
-                print(f"   ✅ Recovered {recovered}/{len(failed_tasks)} tasks")
+                print(f"\n📋 Analyzing {len(failed_tasks)} failed tasks...")
+                retry_analysis = validator.retry_failed_tasks(failed_tasks, metadata)
+                recommended = sum(1 for r in retry_analysis if r.get('retry_recommended'))
+                print(f"   ✅ {recommended}/{len(failed_tasks)} tasks recommended for retry")
             
         except ImportError:
             print(f"\n⚠️  ResidualAgent validator not available, using basic validation")
-            logger.warning("ResidualAgent validator not found")
+            logger.warning("ResidualAgent validator not found - create agents/residual_agent_validator.py")
+            
+            # Basic validation
+            validation_score = 100
+            error_count = sum(1 for r in mapper_results.values() if r.get('status') == 'error')
+            warning_count = 0
+            
+            if error_count > 0:
+                validation_score -= (error_count * 20)
+            
+            print(f"\n✅ Basic validation complete")
+            print(f"   📊 Quality Score: {validation_score}/100")
+            print(f"   ❌ Errors: {error_count}")
+            print(f"   ⚠️  Warnings: {warning_count}")
+            
         except Exception as e:
             print(f"\n⚠️  Residual Agent validation failed (non-critical): {e}")
             logger.warning(f"Residual Agent validation failed: {e}")
@@ -298,16 +379,20 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
     try:
         merge_supervisor = MergeSupervisor(use_llm=Config.ENABLE_LLM_MERGE)
         
-        # Pass global context if available
-        merge_kwargs = {}
-        if residual_used and global_context:
-            merge_kwargs['global_context'] = global_context
+        # FIXED: Add global context to metadata instead of passing as kwarg
+        if residual_used and global_context and isinstance(global_context, dict):
+            metadata['residual_context'] = {
+                'version': global_context.get('version', 1),
+                'high_level_intent': safe_truncate(global_context.get('high_level_intent', ''), 200),
+                'document_context': safe_truncate(global_context.get('document_context', ''), 200),
+                'top_entities': (global_context.get('global_entities', []) or [])[:10],
+                'top_keywords': (global_context.get('global_keywords', []) or [])[:10]
+            }
         
         final_report = merge_supervisor.merge(
             mapper_results,
             reduced_results,
-            metadata,
-            **merge_kwargs
+            metadata
         )
         
         # Save merged report
@@ -334,13 +419,13 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
     try:
         # Include global context in report if available
         report_metadata = metadata.copy()
-        if residual_used and global_context:
+        if residual_used and global_context and isinstance(global_context, dict):
             report_metadata['global_context'] = {
-                'version': global_context.get('version'),
-                'high_level_intent': global_context.get('high_level_intent'),
-                'document_context': global_context.get('document_context'),
-                'top_entities': global_context.get('global_entities', [])[:10],
-                'top_keywords': global_context.get('global_keywords', [])[:10]
+                'version': global_context.get('version', 1),
+                'high_level_intent': safe_truncate(global_context.get('high_level_intent', ''), 200),
+                'document_context': safe_truncate(global_context.get('document_context', ''), 200),
+                'top_entities': (global_context.get('global_entities', []) or [])[:10],
+                'top_keywords': (global_context.get('global_keywords', []) or [])[:10]
             }
         
         report_files = generate_analysis_report(
@@ -387,20 +472,31 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
     print(f"   Unique Keywords: {consolidated.get('total_unique_keywords', 0)}")
     
     top_entities = consolidated.get('top_entities', [])
-    if top_entities:
+    if top_entities and len(top_entities) > 0:
         print(f"   Top Entity: {top_entities[0].get('entity', 'N/A')} ({top_entities[0].get('count', 0)})")
     
     top_keywords = consolidated.get('top_keywords', [])
-    if top_keywords:
+    if top_keywords and len(top_keywords) > 0:
         print(f"   Top Keyword: {top_keywords[0].get('keyword', 'N/A')} ({top_keywords[0].get('count', 0)})")
     
     # Global context stats
-    if residual_used and global_context:
+    if residual_used and global_context and isinstance(global_context, dict):
         print(f"\n🤖 RESIDUAL AGENT CONTEXT:")
         print(f"   Version: {global_context.get('version', 1)}")
-        print(f"   Sections: {len(global_context.get('section_overview', {}).get('sections', []))}")
-        print(f"   Global Entities: {len(global_context.get('global_entities', []))}")
-        print(f"   Global Keywords: {len(global_context.get('global_keywords', []))}")
+        
+        # FIXED: Safe sections extraction
+        section_overview = global_context.get('section_overview')
+        section_count = 0
+        if isinstance(section_overview, dict):
+            sections = section_overview.get('sections', [])
+            section_count = len(sections) if isinstance(sections, list) else 0
+        
+        print(f"   Sections: {section_count}")
+        
+        entities = global_context.get('global_entities', [])
+        keywords = global_context.get('global_keywords', [])
+        print(f"   Global Entities: {len(entities) if isinstance(entities, list) else 0}")
+        print(f"   Global Keywords: {len(keywords) if isinstance(keywords, list) else 0}")
     
     # Quality metrics
     quality = final_report.get('quality_metrics', {})
@@ -408,7 +504,7 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
     print(f"   Overall Score: {quality.get('overall_quality_score', 0):.1f}/100")
     print(f"   Rating: {quality.get('quality_rating', 'N/A')}")
     print(f"   Coverage: {quality.get('coverage_score', 0):.1f}%")
-    print(f"   Completeness: {quality.get('completeness_score', 0):.1f}%")
+    print(f"   Success Rate: {quality.get('success_rate', 0):.1f}%")
     
     # Timing breakdown
     print(f"\n⏱️  TIMING BREAKDOWN:")
@@ -416,13 +512,17 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
     print(f"   Mapper: {mapper_result.get('elapsed_time', 0):.2f}s")
     print(f"   Orchestrator: {summary.get('elapsed_time', 0):.2f}s")
     print(f"   Reducer: {processing_stats.get('elapsed_time', 0):.2f}s")
-    print(f"   Merger: {final_report['processing_statistics'].get('merge_time', 0):.2f}s")
+    
+    # FIXED: Safe access to merge_time
+    merge_stats = final_report.get('processing_statistics', {})
+    merge_time = merge_stats.get('merge_time', 0) if isinstance(merge_stats, dict) else 0
+    print(f"   Merger: {merge_time:.2f}s")
     print(f"   Pages/Second: {summary.get('pages_per_second', 0):.2f}")
     
     # Output files
     print(f"\n📁 OUTPUT FILES:")
     print(f"   Metadata: {metadata_path}")
-    print(f"   Reduced Results: {reduced_results.get('output_path')}")
+    print(f"   Reduced Results: {reduced_results.get('output_path', 'N/A')}")
     print(f"   Final Report: {merged_path}")
     if 'json' in report_files:
         print(f"   Analysis JSON: {report_files['json']}")
@@ -439,6 +539,7 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
         if ray.is_initialized():
             logger.info("Shutting down Ray...")
             ray.shutdown()
+            logger.info("✅ Ray shutdown complete")
     except Exception as e:
         logger.warning(f"Ray shutdown warning: {e}")
     
