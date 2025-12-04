@@ -1,12 +1,12 @@
-# agents/sub_master.py
 """
 SubMaster coordinates Worker Agents to process document sections.
+Now supports ResidualAgent for global context distribution.
 """
 
 import time
 import uuid
 import ray
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from utils.logger import get_logger
 from utils.pdf_extractor import PDFExtractor
 from agents.worker_agent import WorkerAgent
@@ -34,16 +34,38 @@ def emit_event(event_type, pipeline_id, data=None, agent_id=None, agent_type=Non
 
 @ray.remote
 class SubMaster:
-    """SubMaster coordinates Worker Agents to process document sections."""
+    """
+    SubMaster coordinates Worker Agents to process document sections.
+    Supports global context from ResidualAgent.
+    """
     
-    def __init__(self, plan_piece, metadata, pipeline_id: Optional[str] = None):
+    def __init__(
+        self,
+        plan_piece: Dict[str, Any],
+        metadata: Dict[str, Any],
+        pipeline_id: Optional[str] = None,
+        residual_agent: Optional[Any] = None
+    ):
+        """
+        Initialize SubMaster.
+        
+        Args:
+            plan_piece: SubMaster configuration from MasterAgent
+            metadata: Document metadata from Mapper
+            pipeline_id: Pipeline ID for event tracking
+            residual_agent: ResidualAgent Ray actor handle (optional)
+        """
         self.sm_id = plan_piece.get("submaster_id", f"SM-{uuid.uuid4().hex[:6].upper()}")
         self.role = plan_piece.get("role", "generic")
         self.sections = plan_piece.get("assigned_sections", [])
         self.pages = plan_piece.get("page_range", [1, 1])
         self.meta = metadata
         self.status = "initialized"
-        self.pipeline_id = pipeline_id  # For event emission
+        self.pipeline_id = pipeline_id
+        self.residual_agent = residual_agent
+        
+        # Global context from ResidualAgent
+        self.global_context: Dict[str, Any] = {}
         
         # Get PDF path from metadata
         self.pdf_path = metadata.get("file_path", "")
@@ -53,25 +75,63 @@ class SubMaster:
         # Get processing requirements
         self.processing_requirements = metadata.get("processing_requirements", [])
         
-
         # Get LLM config
         self.llm_model = metadata.get("preferred_model", "mistral-small-latest")
-
-
         
         # Worker configuration
         self.num_workers_per_submaster = metadata.get("num_workers_per_submaster", 3)
         self.pdf_extractor = None
-        self.workers = []
+        self.workers: List[Any] = []
         
         logger.info(
             f"[{self.sm_id}] Initialized: role={self.role}, pages={self.pages}, "
             f"workers={self.num_workers_per_submaster}, model={self.llm_model}"
         )
     
-    def initialize(self):
+    def set_global_context(self, context: Dict[str, Any]) -> Dict[str, str]:
+        """
+        Receive global context from ResidualAgent.
+        
+        Args:
+            context: Global context dictionary
+            
+        Returns:
+            Status dict
+        """
+        self.global_context = context
+        
+        logger.info(
+            f"[{self.sm_id}] ✅ Received global context "
+            f"(v{context.get('version', 1)}, "
+            f"{len(context.get('section_overview', {}).get('sections', []))} sections)"
+        )
+        
+        # Broadcast to workers if already spawned
+        if self.workers:
+            for worker in self.workers:
+                try:
+                    worker.set_global_context.remote(context)
+                except Exception as e:
+                    logger.warning(f"[{self.sm_id}] Failed to send context to worker: {e}")
+        
+        return {"status": "ok", "sm_id": self.sm_id}
+    
+    def get_global_context(self) -> Dict[str, Any]:
+        """Get current global context."""
+        return self.global_context
+    
+    def initialize(self) -> Dict[str, Any]:
         """Initialize PDF extractor and spawn Worker Agents."""
         self.status = "ready"
+        
+        # Try to get global context from ResidualAgent
+        if self.residual_agent and not self.global_context:
+            try:
+                context = ray.get(self.residual_agent.get_snapshot.remote(), timeout=5)
+                self.global_context = context
+                logger.info(f"[{self.sm_id}] Retrieved global context from ResidualAgent")
+            except Exception as e:
+                logger.warning(f"[{self.sm_id}] Could not get context from ResidualAgent: {e}")
         
         # Initialize PDF extractor
         try:
@@ -96,7 +156,8 @@ class SubMaster:
                     llm_model=self.llm_model,
                     processing_requirements=self.processing_requirements,
                     pipeline_id=self.pipeline_id,
-                    submaster_id=self.sm_id
+                    submaster_id=self.sm_id,
+                    residual_agent=self.residual_agent  # Pass ResidualAgent handle
                 )
                 
                 self.workers.append(worker)
@@ -119,13 +180,66 @@ class SubMaster:
                 f"[{self.sm_id}] Initialized {success_count}/{self.num_workers_per_submaster} workers"
             )
             
+            # Send global context to workers if available
+            if self.global_context:
+                logger.info(f"[{self.sm_id}] Broadcasting global context to {len(self.workers)} workers")
+                for worker in self.workers:
+                    try:
+                        worker.set_global_context.remote(self.global_context)
+                    except Exception as e:
+                        logger.warning(f"[{self.sm_id}] Failed to send context to worker: {e}")
+            
+            # Send task map to ResidualAgent
+            if self.residual_agent:
+                self._send_task_map_to_residual()
+            
         except Exception as e:
             logger.error(f"[{self.sm_id}] Failed to initialize workers: {e}")
             self.workers = []
         
         return {"sm_id": self.sm_id, "status": "ready", "num_workers": len(self.workers)}
     
-    def process(self):
+    def _send_task_map_to_residual(self) -> None:
+        """Send worker task allocation to ResidualAgent."""
+        if not self.residual_agent:
+            return
+        
+        try:
+            # Handle multiple page ranges
+            all_pages = []
+            for i in range(0, len(self.pages), 2):
+                start, end = self.pages[i], self.pages[i + 1]
+                all_pages.extend(range(start, end + 1))
+            
+            # Create work distribution
+            work_distribution = []
+            for idx, page_num in enumerate(all_pages):
+                worker_idx = idx % len(self.workers)
+                worker_id = f"{self.sm_id}-W{worker_idx+1}"
+                section_name = self._get_section_for_page(page_num)
+                
+                work_distribution.append({
+                    "worker_id": worker_id,
+                    "task_type": "page_analysis",
+                    "page_range": [page_num, page_num],
+                    "status": "assigned"
+                })
+            
+            update = {
+                "submaster_id": self.sm_id,
+                "section_name": ", ".join(self.sections) if self.sections else "Multiple",
+                "work_distribution": work_distribution
+            }
+            
+            # Fire and forget
+            self.residual_agent.update_from_submaster.remote(update, self.sm_id)
+            
+            logger.info(f"[{self.sm_id}] Sent task map to ResidualAgent ({len(work_distribution)} tasks)")
+        
+        except Exception as e:
+            logger.warning(f"[{self.sm_id}] Failed to send task map to ResidualAgent: {e}")
+    
+    def process(self) -> Dict[str, Any]:
         """Process assigned pages by delegating to Worker Agents."""
         start_time = time.time()
         self.status = "running"
@@ -140,7 +254,8 @@ class SubMaster:
         
         # Handle multiple page ranges
         if len(self.pages) % 2 != 0:
-            raise ValueError(f"Invalid page_range for {self.sm_id}: {self.pages}")
+            logger.error(f"[{self.sm_id}] Invalid page_range: {self.pages}")
+            return self._create_error_result([], "Invalid page_range format")
         
         # Collect all pages to process
         all_pages = []
@@ -171,7 +286,7 @@ class SubMaster:
             return self._create_error_result(all_pages, f"Extraction failed: {e}")
         
         # Distribute pages to workers using Ray futures
-        page_futures = []
+        page_futures: List[Tuple[int, Any]] = []
         
         for idx, page_num in enumerate(all_pages):
             text = extracted_pages.get(page_num, "")
@@ -205,7 +320,7 @@ class SubMaster:
                 completed_pages += 1
                 
                 # Update statistics
-                if page_result.get("status") == "success":
+                if page_result.get("status") in ["success", "skipped"]:
                     llm_successes += 1
                     total_entities += len(page_result.get("entities", []))
                     total_keywords += len(page_result.get("keywords", []))
@@ -234,7 +349,7 @@ class SubMaster:
                 output.append({
                     "page": page_num,
                     "error": str(e),
-                    "summary": f"[ERROR: Worker failed on page {page_num}]",
+                    "summary": f"[ERROR: Worker failed]",
                     "status": "error",
                     "entities": [],
                     "keywords": []
@@ -270,7 +385,8 @@ class SubMaster:
             "llm_successes": llm_successes,
             "llm_failures": llm_failures,
             "aggregate_summary": aggregate_summary,
-            "elapsed_time": elapsed
+            "elapsed_time": elapsed,
+            "used_global_context": bool(self.global_context)
         }
     
     def _get_section_for_page(self, page_num: int) -> str:
@@ -286,7 +402,7 @@ class SubMaster:
         
         return "Unknown"
     
-    def _generate_aggregate_summary(self, results: list) -> str:
+    def _generate_aggregate_summary(self, results: List[Dict[str, Any]]) -> str:
         """Generate an overall summary from all page results."""
         summaries = [
             r.get("summary", "") 
@@ -318,8 +434,14 @@ class SubMaster:
             "page_range": self.pages,
             "num_workers": 0,
             "results": [
-                {"page": p, "error": error_msg, "summary": f"[ERROR: {error_msg}]", 
-                 "status": "error", "entities": [], "keywords": []}
+                {
+                    "page": p,
+                    "error": error_msg,
+                    "summary": f"[ERROR: {error_msg}]",
+                    "status": "error",
+                    "entities": [],
+                    "keywords": []
+                }
                 for p in pages
             ],
             "total_pages": len(pages),
@@ -329,5 +451,19 @@ class SubMaster:
             "llm_successes": 0,
             "llm_failures": len(pages),
             "aggregate_summary": f"Processing failed: {error_msg}",
-            "elapsed_time": 0
+            "elapsed_time": 0,
+            "used_global_context": bool(self.global_context)
+        }
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get SubMaster status."""
+        return {
+            "sm_id": self.sm_id,
+            "role": self.role,
+            "status": self.status,
+            "num_workers": len(self.workers),
+            "has_global_context": bool(self.global_context),
+            "context_version": self.global_context.get("version", 0),
+            "pipeline_id": self.pipeline_id,
+            "has_residual_agent": self.residual_agent is not None
         }

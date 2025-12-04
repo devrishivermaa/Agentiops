@@ -1,6 +1,6 @@
 """
-COMPLETE PIPELINE: Mapper → MasterAgent → SubMasters → Reducer → Merger → Reports
-Fully implements Architecture 1 with all stages.
+COMPLETE PIPELINE: Mapper → MasterAgent → ResidualAgent → SubMasters → Reducer → Merger → Reports
+Fully implements Architecture 1 with all 8 stages including ResidualAgent coordination.
 """
 
 import os
@@ -12,7 +12,7 @@ from config import Config
 from workflows.mapper import Mapper
 from workflows.reducer import Reducer
 from agents.master_agent import MasterAgent
-from agents.residual_agent import ResidualAgent
+from agents.residual_agent import ResidualAgentActor
 from orchestrator import spawn_submasters_and_run
 from merger.merge_supervisor import MergeSupervisor
 from utils.report_generator import generate_analysis_report
@@ -36,28 +36,33 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
     """
     Run the COMPLETE document processing pipeline with all stages.
     
-    Pipeline Stages:
+    Pipeline Stages (Architecture 1):
     1. Mapper: Extract metadata and validate PDF
     2. MasterAgent: Generate SubMaster execution plan
-    3. Orchestrator: Execute SubMasters in parallel (Mapper Stage)
-    4. [Optional] Vector DB: Store embeddings for semantic search
-    5. Reducer: Aggregate and consolidate results
-    6. [Optional] Residual Agent: Validate and fix errors
-    7. Merger: Combine Mapper + Reducer outputs
-    8. Report Generator: Create final PDF + JSON reports
+    3. ResidualAgent: Generate global context and coordinate agents
+    4. Orchestrator: Execute SubMasters in parallel with global context
+    5. [Optional] Vector DB: Store embeddings for semantic search
+    6. Reducer: Aggregate and consolidate results
+    7. ResidualAgent Quality Check: Validate and fix errors
+    8. Merger: Combine Mapper + Reducer outputs
+    9. Report Generator: Create final PDF + JSON reports
     
     Args:
         pdf_path: Path to PDF file
         config: Optional user configuration
         pipeline_id: Optional pipeline ID for tracking
+    
+    Returns:
+        0 on success, 1 on failure
     """
     pipeline_start = time.time()
     
     print("\n" + "=" * 80)
-    print("🚀 AGENTOPS COMPLETE PIPELINE (Architecture 1)")
+    print("🚀 AGENTOPS COMPLETE PIPELINE (Architecture 1 + ResidualAgent)")
     print("=" * 80)
     print(f"📄 Input: {pdf_path}")
     print(f"🆔 Pipeline ID: {pipeline_id or 'N/A'}")
+    print(f"🤖 ResidualAgent: {'ENABLED' if Config.ENABLE_RESIDUAL_AGENT else 'DISABLED'}")
     print("=" * 80)
     
     # Use config or defaults
@@ -68,7 +73,7 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
     # STAGE 1: MAPPER - Validate PDF and Extract Metadata
     # ========================================================================
     print("\n" + "=" * 80)
-    print("📋 [STAGE 1/8] MAPPER: Validating PDF and extracting metadata...")
+    print("📋 [STAGE 1/9] MAPPER: Validating PDF and extracting metadata...")
     print("=" * 80)
     
     mapper = Mapper(output_dir=Config.OUTPUT_DIR)
@@ -97,7 +102,7 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
     # STAGE 2: MASTER AGENT - Generate SubMaster Execution Plan
     # ========================================================================
     print("\n" + "=" * 80)
-    print("🤖 [STAGE 2/8] MASTER AGENT: Generating SubMaster execution plan...")
+    print("🤖 [STAGE 2/9] MASTER AGENT: Generating SubMaster execution plan...")
     print("=" * 80)
     
     try:
@@ -108,7 +113,14 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
             print("\n❌ Plan generation failed or not approved")
             return 1
         
-        print(f"\n✅ Plan approved: {plan.get('num_submasters')} SubMasters")
+        num_submasters = plan.get('num_submasters', len(plan.get('submasters', [])))
+        print(f"\n✅ Plan approved: {num_submasters} SubMasters")
+        
+        # Show SubMaster breakdown
+        for sm in plan.get('submasters', [])[:3]:  # Show first 3
+            print(f"   • {sm['submaster_id']}: {sm.get('role', 'N/A')[:50]} (pages {sm.get('page_range', [])})")
+        if num_submasters > 3:
+            print(f"   ... and {num_submasters - 3} more")
         
     except Exception as e:
         print(f"\n❌ Master Agent failed: {e}")
@@ -116,20 +128,43 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
         return 1
     
     # ========================================================================
-    # STAGE 3: ORCHESTRATOR - Execute SubMasters (Mapper Stage)
+    # STAGE 3: ORCHESTRATOR - Execute SubMasters with ResidualAgent
     # ========================================================================
     print("\n" + "=" * 80)
-    print("⚙️  [STAGE 3/8] ORCHESTRATOR: Executing SubMasters in parallel...")
+    print("⚙️  [STAGE 3/9] ORCHESTRATOR: Executing SubMasters with ResidualAgent...")
     print("=" * 80)
     
     try:
-        mapper_results = spawn_submasters_and_run(plan, metadata, pipeline_id)
+        # Orchestrator handles ResidualAgent creation internally
+        orchestration_result = spawn_submasters_and_run(
+            plan=plan,
+            metadata=metadata,
+            pipeline_id=pipeline_id,
+            use_residual_agent=Config.ENABLE_RESIDUAL_AGENT
+        )
         
-        success_count = sum(1 for r in mapper_results.values() if r.get('status') == 'ok')
-        print(f"\n✅ SubMaster execution completed: {success_count}/{len(mapper_results)} succeeded")
+        mapper_results = orchestration_result['results']
+        summary = orchestration_result['summary']
+        global_context = orchestration_result.get('residual_context', {})
+        residual_used = orchestration_result.get('residual_agent_used', False)
+        
+        print(f"\n✅ Orchestration completed")
+        print(f"   📊 SubMasters: {summary['successful_submasters']}/{summary['total_submasters']} succeeded")
+        print(f"   📄 Pages: {summary['total_pages_processed']}")
+        print(f"   🎯 LLM Success: {summary['llm_success_rate']:.1f}%")
+        print(f"   ⏱️  Time: {summary['elapsed_time']:.2f}s")
+        print(f"   🤖 ResidualAgent: {'Used (v{})'.format(global_context.get('version', 1)) if residual_used else 'Not used'}")
+        
+        # Show global context summary if available
+        if residual_used and global_context:
+            print(f"\n🧠 Global Context Summary:")
+            print(f"   • Intent: {global_context.get('high_level_intent', 'N/A')[:60]}")
+            print(f"   • Strategy: {global_context.get('master_strategy', 'N/A')[:60]}")
+            print(f"   • Entities: {len(global_context.get('global_entities', []))}")
+            print(f"   • Keywords: {len(global_context.get('global_keywords', []))}")
         
     except Exception as e:
-        print(f"\n❌ SubMaster execution failed: {e}")
+        print(f"\n❌ Orchestrator failed: {e}")
         logger.exception("Orchestrator stage failed")
         return 1
     
@@ -138,7 +173,7 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
     # ========================================================================
     if VECTOR_DB_AVAILABLE and Config.ENABLE_VECTOR_DB:
         print("\n" + "=" * 80)
-        print("🔍 [STAGE 4/8] VECTOR DB: Storing document embeddings...")
+        print("🔍 [STAGE 4/9] VECTOR DB: Storing document embeddings...")
         print("=" * 80)
         
         try:
@@ -162,7 +197,8 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
                 chunks=chunks,
                 metadata={
                     "file_name": metadata.get('file_name'),
-                    "document_type": metadata.get('document_type')
+                    "document_type": metadata.get('document_type'),
+                    "pipeline_id": pipeline_id
                 }
             )
             
@@ -172,13 +208,13 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
             print(f"\n⚠️  Vector DB storage failed (non-critical): {e}")
             logger.warning(f"Vector DB stage failed: {e}")
     else:
-        print("\n⏭️  [STAGE 4/8] VECTOR DB: Skipped (disabled or not available)")
+        print("\n⏭️  [STAGE 4/9] VECTOR DB: Skipped (disabled or not available)")
     
     # ========================================================================
     # STAGE 5: REDUCER - Aggregate and Consolidate Results
     # ========================================================================
     print("\n" + "=" * 80)
-    print("📊 [STAGE 5/8] REDUCER: Aggregating SubMaster results...")
+    print("📊 [STAGE 5/9] REDUCER: Aggregating SubMaster results...")
     print("=" * 80)
     
     try:
@@ -189,6 +225,7 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
         print(f"\n✅ Reducer completed")
         print(f"   📈 Unique Entities: {consolidated.get('total_unique_entities', 0)}")
         print(f"   🔑 Unique Keywords: {consolidated.get('total_unique_keywords', 0)}")
+        print(f"   📄 Pages Analyzed: {consolidated.get('total_pages', 0)}")
         print(f"   💾 Output: {reduced_results.get('output_path')}")
         
     except Exception as e:
@@ -197,56 +234,89 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
         return 1
     
     # ========================================================================
-    # STAGE 6: RESIDUAL AGENT (Optional) - Quality Validation
+    # STAGE 6: RESIDUAL AGENT QUALITY CHECK - Validate Results
     # ========================================================================
     if Config.ENABLE_RESIDUAL_AGENT:
         print("\n" + "=" * 80)
-        print("🔧 [STAGE 6/8] RESIDUAL AGENT: Validating and fixing results...")
+        print("🔧 [STAGE 6/9] RESIDUAL AGENT: Quality validation and error recovery...")
         print("=" * 80)
         
         try:
-            residual_agent = ResidualAgent(max_retries=3)
+            # Import the quality validation ResidualAgent (not the Ray actor)
+            from agents.residual_agent_validator import ResidualAgentValidator
+            
+            validator = ResidualAgentValidator(max_retries=3)
             
             # Validate results
-            validation = residual_agent.validate_results(mapper_results)
+            validation = validator.validate_results(mapper_results)
             print(f"\n✅ Validation complete")
             print(f"   📊 Quality Score: {validation['quality_score']}/100")
             print(f"   ❌ Errors: {validation['error_count']}")
             print(f"   ⚠️  Warnings: {validation['warning_count']}")
             
             # Use fixed results if available
-            if validation['fixed_results']:
+            if validation.get('fixed_results'):
                 mapper_results = validation['fixed_results']
                 print(f"   🔧 Applied fixes to {len(validation['fixed_results'])} SubMaster results")
             
             # Detect anomalies
-            anomalies = residual_agent.detect_anomalies(mapper_results)
+            anomalies = validator.detect_anomalies(mapper_results)
             if anomalies:
                 print(f"   ⚠️  Detected {len(anomalies)} anomalies")
+                for anomaly in anomalies[:3]:  # Show first 3
+                    print(f"      • {anomaly['sm_id']}: {anomaly['type']} (severity: {anomaly['severity']})")
             
+            # Retry failed tasks if any
+            failed_tasks = [
+                {"task_id": sm_id, "error": r.get('error', 'Unknown')}
+                for sm_id, r in mapper_results.items()
+                if r.get('status') == 'error'
+            ]
+            
+            if failed_tasks:
+                print(f"\n🔄 Retrying {len(failed_tasks)} failed tasks...")
+                retry_results = validator.retry_failed_tasks(failed_tasks, metadata)
+                recovered = sum(1 for r in retry_results if r['retry_status'] == 'recovered')
+                print(f"   ✅ Recovered {recovered}/{len(failed_tasks)} tasks")
+            
+        except ImportError:
+            print(f"\n⚠️  ResidualAgent validator not available, using basic validation")
+            logger.warning("ResidualAgent validator not found")
         except Exception as e:
-            print(f"\n⚠️  Residual Agent failed (non-critical): {e}")
-            logger.warning(f"Residual Agent stage failed: {e}")
+            print(f"\n⚠️  Residual Agent validation failed (non-critical): {e}")
+            logger.warning(f"Residual Agent validation failed: {e}")
     else:
-        print("\n⏭️  [STAGE 6/8] RESIDUAL AGENT: Skipped (disabled)")
+        print("\n⏭️  [STAGE 6/9] RESIDUAL AGENT: Skipped (disabled)")
     
     # ========================================================================
     # STAGE 7: MERGE SUPERVISOR - Combine Mapper + Reducer
     # ========================================================================
     print("\n" + "=" * 80)
-    print("🔀 [STAGE 7/8] MERGE SUPERVISOR: Combining Mapper + Reducer outputs...")
+    print("🔀 [STAGE 7/9] MERGE SUPERVISOR: Combining outputs...")
     print("=" * 80)
     
     try:
         merge_supervisor = MergeSupervisor(use_llm=Config.ENABLE_LLM_MERGE)
-        final_report = merge_supervisor.merge(mapper_results, reduced_results, metadata)
+        
+        # Pass global context if available
+        merge_kwargs = {}
+        if residual_used and global_context:
+            merge_kwargs['global_context'] = global_context
+        
+        final_report = merge_supervisor.merge(
+            mapper_results,
+            reduced_results,
+            metadata,
+            **merge_kwargs
+        )
         
         # Save merged report
         merged_path = merge_supervisor.save_merged_report(final_report, Config.OUTPUT_DIR)
         
         quality = final_report.get('quality_metrics', {})
         print(f"\n✅ Merge completed")
-        print(f"   📊 Overall Quality: {quality.get('overall_quality_score', 0)}/100 ({quality.get('quality_rating', 'N/A')})")
+        print(f"   📊 Overall Quality: {quality.get('overall_quality_score', 0):.1f}/100 ({quality.get('quality_rating', 'N/A')})")
+        print(f"   📈 Coverage: {quality.get('coverage_score', 0):.1f}%")
         print(f"   💾 Final Report: {merged_path}")
         
     except Exception as e:
@@ -258,11 +328,26 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
     # STAGE 8: REPORT GENERATOR - Create PDF + JSON Reports
     # ========================================================================
     print("\n" + "=" * 80)
-    print("📄 [STAGE 8/8] REPORT GENERATOR: Creating final reports...")
+    print("📄 [STAGE 8/9] REPORT GENERATOR: Creating final reports...")
     print("=" * 80)
     
     try:
-        report_files = generate_analysis_report(mapper_results, metadata, Config.OUTPUT_DIR)
+        # Include global context in report if available
+        report_metadata = metadata.copy()
+        if residual_used and global_context:
+            report_metadata['global_context'] = {
+                'version': global_context.get('version'),
+                'high_level_intent': global_context.get('high_level_intent'),
+                'document_context': global_context.get('document_context'),
+                'top_entities': global_context.get('global_entities', [])[:10],
+                'top_keywords': global_context.get('global_keywords', [])[:10]
+            }
+        
+        report_files = generate_analysis_report(
+            mapper_results,
+            report_metadata,
+            Config.OUTPUT_DIR
+        )
         
         print("\n✅ Reports generated:")
         if 'json' in report_files:
@@ -275,31 +360,47 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
     except Exception as e:
         print(f"\n⚠️  Report generation failed (non-critical): {e}")
         logger.warning(f"Report generation failed: {e}")
+        report_files = {}
     
     # ========================================================================
-    # FINAL SUMMARY
+    # STAGE 9: FINAL SUMMARY AND CLEANUP
     # ========================================================================
-    total_elapsed = time.time() - pipeline_start
-    
     print("\n" + "=" * 80)
-    print("📊 PIPELINE EXECUTION SUMMARY")
+    print("📊 [STAGE 9/9] FINAL SUMMARY")
     print("=" * 80)
+    
+    total_elapsed = time.time() - pipeline_start
     
     # Processing stats
     processing_stats = reduced_results.get('processing_stats', {})
     print(f"\n📈 PROCESSING STATISTICS:")
     print(f"   Total Pages: {metadata.get('num_pages', 0)}")
-    print(f"   Pages Processed: {processing_stats.get('total_submasters', 0) * metadata.get('num_pages', 0) // len(mapper_results)}")
-    print(f"   SubMasters: {processing_stats.get('total_submasters', 0)}")
-    print(f"   LLM Success Rate: {processing_stats.get('success_rate', 0):.1f}%")
+    print(f"   Pages Processed: {summary.get('total_pages_processed', 0)}")
+    print(f"   SubMasters: {summary.get('total_submasters', 0)}")
+    print(f"   Workers: {summary.get('total_workers', 0)}")
+    print(f"   LLM Success Rate: {summary.get('llm_success_rate', 0):.1f}%")
     
     # Entity/Keyword stats
     consolidated = reduced_results.get('consolidated_analysis', {})
     print(f"\n🔍 EXTRACTION STATISTICS:")
     print(f"   Unique Entities: {consolidated.get('total_unique_entities', 0)}")
     print(f"   Unique Keywords: {consolidated.get('total_unique_keywords', 0)}")
-    print(f"   Top Entity: {consolidated.get('top_entities', [{}])[0].get('entity', 'N/A') if consolidated.get('top_entities') else 'N/A'}")
-    print(f"   Top Keyword: {consolidated.get('top_keywords', [{}])[0].get('keyword', 'N/A') if consolidated.get('top_keywords') else 'N/A'}")
+    
+    top_entities = consolidated.get('top_entities', [])
+    if top_entities:
+        print(f"   Top Entity: {top_entities[0].get('entity', 'N/A')} ({top_entities[0].get('count', 0)})")
+    
+    top_keywords = consolidated.get('top_keywords', [])
+    if top_keywords:
+        print(f"   Top Keyword: {top_keywords[0].get('keyword', 'N/A')} ({top_keywords[0].get('count', 0)})")
+    
+    # Global context stats
+    if residual_used and global_context:
+        print(f"\n🤖 RESIDUAL AGENT CONTEXT:")
+        print(f"   Version: {global_context.get('version', 1)}")
+        print(f"   Sections: {len(global_context.get('section_overview', {}).get('sections', []))}")
+        print(f"   Global Entities: {len(global_context.get('global_entities', []))}")
+        print(f"   Global Keywords: {len(global_context.get('global_keywords', []))}")
     
     # Quality metrics
     quality = final_report.get('quality_metrics', {})
@@ -307,14 +408,16 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
     print(f"   Overall Score: {quality.get('overall_quality_score', 0):.1f}/100")
     print(f"   Rating: {quality.get('quality_rating', 'N/A')}")
     print(f"   Coverage: {quality.get('coverage_score', 0):.1f}%")
+    print(f"   Completeness: {quality.get('completeness_score', 0):.1f}%")
     
-    # Timing
-    print(f"\n⏱️  TIMING:")
-    print(f"   Total Pipeline Time: {total_elapsed:.2f}s")
-    print(f"   Mapper Time: ~{mapper_result.get('elapsed_time', 0):.2f}s")
-    print(f"   Orchestrator Time: ~{sum(r['output'].get('elapsed_time', 0) for r in mapper_results.values() if r.get('status') == 'ok'):.2f}s")
-    print(f"   Reducer Time: {processing_stats.get('elapsed_time', 0):.2f}s")
-    print(f"   Merge Time: {final_report['processing_statistics'].get('merge_time', 0):.2f}s")
+    # Timing breakdown
+    print(f"\n⏱️  TIMING BREAKDOWN:")
+    print(f"   Total Pipeline: {total_elapsed:.2f}s")
+    print(f"   Mapper: {mapper_result.get('elapsed_time', 0):.2f}s")
+    print(f"   Orchestrator: {summary.get('elapsed_time', 0):.2f}s")
+    print(f"   Reducer: {processing_stats.get('elapsed_time', 0):.2f}s")
+    print(f"   Merger: {final_report['processing_statistics'].get('merge_time', 0):.2f}s")
+    print(f"   Pages/Second: {summary.get('pages_per_second', 0):.2f}")
     
     # Output files
     print(f"\n📁 OUTPUT FILES:")
@@ -330,6 +433,15 @@ def run_complete_pipeline(pdf_path: str, config: dict = None, pipeline_id: str =
     print("🎉 PIPELINE COMPLETED SUCCESSFULLY!")
     print("=" * 80 + "\n")
     
+    # Cleanup Ray
+    try:
+        import ray
+        if ray.is_initialized():
+            logger.info("Shutting down Ray...")
+            ray.shutdown()
+    except Exception as e:
+        logger.warning(f"Ray shutdown warning: {e}")
+    
     return 0
 
 
@@ -339,6 +451,10 @@ if __name__ == "__main__":
         print("\nExample:")
         print("  python run_complete_pipeline.py data/paper.pdf")
         print("  python run_complete_pipeline.py data/paper.pdf config.json")
+        print("\nEnvironment Variables:")
+        print("  ENABLE_RESIDUAL_AGENT=true/false  - Enable ResidualAgent (default: true)")
+        print("  ENABLE_VECTOR_DB=true/false       - Enable Vector DB (default: false)")
+        print("  LLM_MODEL=model-name               - LLM model to use (default: mistral-small-latest)")
         sys.exit(1)
     
     pdf_path = sys.argv[1]
