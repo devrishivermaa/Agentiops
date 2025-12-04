@@ -1,6 +1,6 @@
 {
   "num_submasters": 4,
-  "distribution_strategy": "Divide the document into logical sections, assigning each SubMaster a distinct role to extract key findings, methods, and results efficiently. The Abstract and Introduction are grouped together for context, while the Body is split into two parts for detailed analysis. The Conclusion is handled separately to capture final insights.",
+  "distribution_strategy": "Each SubMaster is assigned a distinct section or logical grouping of sections to ensure balanced workload and specialized focus on key document parts.",
   "submasters": [
     {
       "submaster_id": "SM-001",
@@ -17,24 +17,24 @@
     },
     {
       "submaster_id": "SM-002",
-      "role": "Extract Methods from Body (Part 1)",
+      "role": "Extract Methods from Body",
       "assigned_sections": [
         "Body"
       ],
       "page_range": [
         7,
-        11
+        12
       ],
       "estimated_workload": "high"
     },
     {
       "submaster_id": "SM-003",
-      "role": "Extract Results from Body (Part 2)",
+      "role": "Extract Results from Body",
       "assigned_sections": [
         "Body"
       ],
       "page_range": [
-        12,
+        13,
         16
       ],
       "estimated_workload": "high"

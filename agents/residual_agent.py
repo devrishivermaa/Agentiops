@@ -213,7 +213,7 @@ class ResidualAgentActor:
     # initial generation
 
     def _generate_initial_context(self, metadata: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
-        prompt = self._build_prompt(metadata, plan)
+        prompt = self._build_initial_prompt(metadata, plan)
         raw = self.llm.call_with_retry(prompt, parse_json=False)
 
         parsed = self._safe_extract_json(raw)
@@ -232,6 +232,9 @@ class ResidualAgentActor:
                 self._maybe_persist()
             except Exception:
                 logger.exception(f"[{self.id}] Failed to persist initial snapshot")
+
+        logger.info(f"[{self.id}] Initial context generated with worker_guidance keys: {list(gc.get('worker_guidance', {}).keys())}")
+        logger.info(f"[{self.id}] Initial context generated with submaster_guidance keys: {list(gc.get('submaster_guidance', {}).keys())}")
 
         return json.loads(json.dumps(self.global_context))
 
@@ -290,15 +293,47 @@ class ResidualAgentActor:
             upd = str(updates)
 
         prompt = f"""
-You are a ResidualAgent responsible for maintaining a global context for a multi-agent system.
+You are a ResidualAgent responsible for maintaining a global context for a multi-agent PDF processing system.
 
 Previous global_context:
 {prev}
 
-Recent updates (submasters + workers):
+Recent updates from submasters and workers:
 {upd}
 
-Produce ONLY valid JSON with top-level key "global_context". Make conservative edits: merge allocations, update section notes, and ensure worker guidance reflects recent task maps.
+Task: Enhance the global_context by:
+1. Merging work allocations from submaster updates
+2. Updating section notes with any new information
+3. Ensuring worker_guidance and submaster_guidance are properly populated with actionable instructions
+4. Maintaining consistency across all fields
+
+CRITICAL: The worker_guidance and submaster_guidance fields MUST contain specific, actionable instructions.
+
+Output ONLY valid JSON with a top-level key "global_context" that includes ALL required fields:
+- high_level_intent
+- document_context
+- master_strategy
+- section_overview (with sections array)
+- worker_guidance (object with specific instructions for different aspects)
+- submaster_guidance (object with coordination instructions)
+- important_constraints
+- expected_outputs
+- reasoning_style
+
+Example worker_guidance structure:
+{{
+  "entity_extraction": "Extract named entities including people, organizations, methods, and technical terms. Focus on key figures and methodologies.",
+  "keyword_indexing": "Identify and index domain-specific keywords, technical terms, and key concepts for searchability.",
+  "summary_generation": "Create concise summaries highlighting main findings, methods, and conclusions. Keep summaries under 3 sentences.",
+  "consistency_check": "Ensure terminology and references remain consistent with previous sections and the overall document context."
+}}
+
+Example submaster_guidance structure:
+{{
+  "coordination": "Ensure workers in your section maintain consistent terminology and entity references.",
+  "quality_control": "Review worker outputs for completeness and alignment with the document's overall narrative.",
+  "cross_section_awareness": "Be aware of dependencies between your section and others as noted in section_overview."
+}}
 """
         try:
             raw = self.llm.call_with_retry(prompt, parse_json=False)
@@ -320,6 +355,8 @@ Produce ONLY valid JSON with top-level key "global_context". Make conservative e
             except Exception:
                 logger.exception(f"[{self.id}] Failed to persist after enhancement")
             logger.info(f"[{self.id}] Enhanced global_context merged")
+            logger.info(f"[{self.id}] Enhanced worker_guidance keys: {list(new_gc.get('worker_guidance', {}).keys())}")
+            logger.info(f"[{self.id}] Enhanced submaster_guidance keys: {list(new_gc.get('submaster_guidance', {}).keys())}")
 
         return json.loads(json.dumps(self.global_context))
 
@@ -427,27 +464,31 @@ Produce ONLY valid JSON with top-level key "global_context". Make conservative e
                     existing_secs[name] = s
             self.global_context["section_overview"]["sections"] = list(existing_secs.values())
 
-        # guidance replacement/merge
-        if "worker_guidance" in new and isinstance(new["worker_guidance"], dict):
+        # guidance replacement/merge - IMPROVED to ensure non-empty guidance
+        if "worker_guidance" in new and isinstance(new["worker_guidance"], dict) and new["worker_guidance"]:
             dest = self.global_context.get("worker_guidance", {})
             for k, v in new["worker_guidance"].items():
-                if k not in dest or not dest[k]:
-                    dest[k] = v
-                else:
-                    # concat short strings
-                    if isinstance(dest[k], str) and isinstance(v, str) and len(dest[k]) < 500:
-                        dest[k] = (dest[k].strip() + " " + v.strip()).strip()
+                if v:  # Only merge non-empty values
+                    if k not in dest or not dest[k]:
+                        dest[k] = v
+                    else:
+                        # concat short strings
+                        if isinstance(dest[k], str) and isinstance(v, str) and len(dest[k]) < 500:
+                            dest[k] = (dest[k].strip() + " " + v.strip()).strip()
             self.global_context["worker_guidance"] = dest
+            logger.info(f"[{self.id}] Merged worker_guidance with {len(dest)} keys")
 
-        if "submaster_guidance" in new and isinstance(new["submaster_guidance"], dict):
+        if "submaster_guidance" in new and isinstance(new["submaster_guidance"], dict) and new["submaster_guidance"]:
             dest = self.global_context.get("submaster_guidance", {})
             for k, v in new["submaster_guidance"].items():
-                if k not in dest or not dest[k]:
-                    dest[k] = v
-                else:
-                    if isinstance(dest[k], str) and isinstance(v, str) and len(dest[k]) < 500:
-                        dest[k] = (dest[k].strip() + " " + v.strip()).strip()
+                if v:  # Only merge non-empty values
+                    if k not in dest or not dest[k]:
+                        dest[k] = v
+                    else:
+                        if isinstance(dest[k], str) and isinstance(v, str) and len(dest[k]) < 500:
+                            dest[k] = (dest[k].strip() + " " + v.strip()).strip()
             self.global_context["submaster_guidance"] = dest
+            logger.info(f"[{self.id}] Merged submaster_guidance with {len(dest)} keys")
 
         # constraints
         if "important_constraints" in new and isinstance(new["important_constraints"], list):
@@ -490,7 +531,8 @@ Produce ONLY valid JSON with top-level key "global_context". Make conservative e
         raise ValueError("No JSON object found in LLM output")
 
 
-    def _build_prompt(self, metadata: Dict[str, Any], plan: Dict[str, Any]) -> str:
+    def _build_initial_prompt(self, metadata: Dict[str, Any], plan: Dict[str, Any]) -> str:
+        """Build a more detailed prompt with concrete examples for guidance fields"""
         try:
             md = json.dumps(metadata, indent=2, ensure_ascii=False)
         except Exception:
@@ -500,8 +542,12 @@ Produce ONLY valid JSON with top-level key "global_context". Make conservative e
         except Exception:
             pl = str(plan)
 
+        # Extract processing requirements to guide the generation
+        proc_reqs = metadata.get("processing_requirements", [])
+        req_str = ", ".join(proc_reqs) if proc_reqs else "summary_generation, entity_extraction, keyword_indexing"
+
         return f"""
-Generate a 'global_context' JSON object for a multi-agent PDF pipeline.
+You are a ResidualAgent responsible for generating a comprehensive global context for a multi-agent PDF processing system.
 
 Input metadata:
 {md}
@@ -509,11 +555,51 @@ Input metadata:
 Input master plan:
 {pl}
 
-Output only valid JSON with a top-level key "global_context".
-global_context must include: high_level_intent, document_context, master_strategy,
-section_overview (with sections list), worker_guidance, submaster_guidance,
-important_constraints, expected_outputs, reasoning_style.
-Be conservative: if information is missing, use "unknown" or "not provided".
+Task: Generate a complete global_context JSON object that will guide all SubMasters and Workers in processing this document.
+
+The processing requirements are: {req_str}
+
+Output ONLY valid JSON with a top-level key "global_context" that includes:
+
+1. high_level_intent: The user's goal (e.g., "Summarize for a presentation", "Extract research findings")
+2. document_context: Brief description of what the document is about
+3. master_strategy: How the work is divided among SubMasters
+4. section_overview: Object with "sections" array, each containing:
+   - name: section name
+   - page_start: starting page number
+   - page_end: ending page number
+   - purpose: what this section covers
+   - importance: "high", "medium", or "low"
+   - dependencies: array of other section names this depends on
+5. worker_guidance: Object with SPECIFIC instructions for each processing task. Must include:
+   - For each requirement in {req_str}, provide detailed guidance
+   - Example keys: "entity_extraction", "keyword_indexing", "summary_generation", "consistency_check"
+6. submaster_guidance: Object with coordination instructions:
+   - "coordination": how to coordinate workers
+   - "quality_control": what to check in worker outputs
+   - "cross_section_awareness": how to handle section dependencies
+7. important_constraints: Array of constraints (e.g., "Maintain consistent terminology", "Preserve technical accuracy")
+8. expected_outputs: Description of what final outputs should look like
+9. reasoning_style: How to approach the analysis (e.g., "Analytical and structured", "Concise and factual")
+
+CRITICAL: worker_guidance and submaster_guidance MUST be populated with specific, actionable instructions. Do NOT leave them empty or use placeholder text.
+
+Example worker_guidance (adapt to the actual document and requirements):
+{{
+  "entity_extraction": "Extract named entities including authors, methods, key findings, and technical terms. Pay special attention to methodology names and important figures.",
+  "keyword_indexing": "Identify domain-specific keywords, technical terms, and key concepts. Focus on terms that appear frequently or are emphasized in headings.",
+  "summary_generation": "Create concise 2-3 sentence summaries capturing the main point, methodology, and key result or conclusion of each section.",
+  "consistency_check": "Ensure entity names and terminology match previous sections. Cross-reference with the document_context."
+}}
+
+Example submaster_guidance:
+{{
+  "coordination": "Distribute pages evenly among workers. Ensure workers are aware of section boundaries and dependencies.",
+  "quality_control": "Review worker outputs for completeness, accuracy, and consistency with the overall document narrative.",
+  "cross_section_awareness": "Note any references to other sections and ensure these are captured in the section dependencies."
+}}
+
+Generate the complete global_context now:
 """
 
 

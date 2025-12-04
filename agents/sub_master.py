@@ -283,7 +283,7 @@ class SubMaster:
         context_usage = sum(1 for r in results if r.get("global_context_used", False))
         logger.info(f"[{self.sm_id}] Global context usage: {context_usage}/{len(results)} pages")
 
-        # FIXED: Compare with None instead of using truth value test
+        # Save individual worker results to MongoDB
         if self.mongo_worker_coll is not None:
             for r in results:
                 try:
@@ -305,10 +305,12 @@ class SubMaster:
         elapsed = time.time() - start
         self.status = "completed"
 
-        return {
+        # Build aggregated result
+        aggregated_result = {
             "sm_id": self.sm_id,
             "status": "completed",
             "elapsed": elapsed,
+            "timestamp": time.time(),
             "output": {
                 "role": self.role,
                 "assigned_sections": self.sections,
@@ -318,6 +320,18 @@ class SubMaster:
                 "results": results
             }
         }
+
+        # **FIX: Save SubMaster aggregated results to MongoDB**
+        if self.mongo_sm_coll is not None:
+            try:
+                insert_result = self.mongo_sm_coll.insert_one(aggregated_result.copy())
+                logger.info(f"[{self.sm_id}] Saved aggregated results to MongoDB with ID: {insert_result.inserted_id}")
+            except Exception as e:
+                logger.error(f"[{self.sm_id}] Failed to save aggregated results to MongoDB: {e}")
+        else:
+            logger.warning(f"[{self.sm_id}] MongoDB SubMaster collection not available, skipping save")
+
+        return aggregated_result
 
     # ----------------------------------------------------------
     # Determine section name for a page
