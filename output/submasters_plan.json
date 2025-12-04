@@ -1,6 +1,6 @@
 {
   "num_submasters": 4,
-  "distribution_strategy": "The document is divided among 4 SubMasters based on logical section groupings. The Abstract and Introduction are grouped together for an overview, while the Body is split into two parts for detailed extraction. The Conclusion is handled separately to capture final insights.",
+  "distribution_strategy": "The document is divided among 4 SubMasters based on logical section groupings. The Abstract and Introduction are grouped together for a high-level overview, the Body is split into two parts for detailed analysis, and the Conclusion is handled separately for final insights.",
   "submasters": [
     {
       "submaster_id": "SM-001",
@@ -17,31 +17,31 @@
     },
     {
       "submaster_id": "SM-002",
-      "role": "Extract key findings and results from the first half of the Body",
+      "role": "Analyze first half of Body for key findings and methodology",
       "assigned_sections": [
         "Body"
       ],
       "page_range": [
         7,
-        11
+        13
       ],
       "estimated_workload": "high"
     },
     {
       "submaster_id": "SM-003",
-      "role": "Extract methods and detailed results from the second half of the Body",
+      "role": "Analyze second half of Body for results and discussion",
       "assigned_sections": [
         "Body"
       ],
       "page_range": [
-        12,
+        14,
         16
       ],
       "estimated_workload": "high"
     },
     {
       "submaster_id": "SM-004",
-      "role": "Summarize the Conclusion section for final insights",
+      "role": "Summarize Conclusion and extract key takeaways",
       "assigned_sections": [
         "Conclusion"
       ],
@@ -49,7 +49,7 @@
         17,
         21
       ],
-      "estimated_workload": "low"
+      "estimated_workload": "medium"
     }
   ],
   "status": "approved"
