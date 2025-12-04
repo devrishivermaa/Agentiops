@@ -36,3 +36,5 @@ build/
 /dist/
 /build/
 .env
+
+myenv
