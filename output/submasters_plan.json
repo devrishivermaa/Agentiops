@@ -1,6 +1,6 @@
 {
   "num_submasters": 4,
-  "distribution_strategy": "The document is divided among 4 SubMasters based on logical section groupings. The Abstract and Introduction are grouped together for a high-level overview, while the Body is split into two parts for detailed analysis, and the Conclusion is handled separately for synthesis. This ensures balanced workload and logical coherence.",
+  "distribution_strategy": "The document is divided based on logical sections to ensure each SubMaster handles a coherent part of the research paper. The Abstract and Introduction are grouped together for an overview, the Body is split into two parts for detailed analysis, and the Conclusion is assigned separately for final insights.",
   "submasters": [
     {
       "submaster_id": "SM-001",
@@ -17,7 +17,7 @@
     },
     {
       "submaster_id": "SM-002",
-      "role": "Analyze first half of the Body for key findings and methodology",
+      "role": "Analyze first half of the Body section for key findings",
       "assigned_sections": [
         "Body"
       ],
@@ -29,7 +29,7 @@
     },
     {
       "submaster_id": "SM-003",
-      "role": "Analyze second half of the Body for results and discussion",
+      "role": "Analyze second half of the Body section for key findings",
       "assigned_sections": [
         "Body"
       ],
@@ -41,7 +41,7 @@
     },
     {
       "submaster_id": "SM-004",
-      "role": "Summarize Conclusion and synthesize key takeaways",
+      "role": "Summarize Conclusion section for final insights",
       "assigned_sections": [
         "Conclusion"
       ],

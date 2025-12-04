@@ -1,15 +1,19 @@
 """
 SubMaster coordinates Worker Agents to process document sections.
 Now supports ResidualAgent for global context distribution.
+Includes MongoDB persistence for SubMaster and Worker results.
 """
 
 import time
 import uuid
+import os
 import ray
 from typing import Dict, Any, List, Optional, Tuple
 from utils.logger import get_logger
 from utils.pdf_extractor import PDFExtractor
 from agents.worker_agent import WorkerAgent
+from pymongo import MongoClient
+from dotenv import load_dotenv
 
 # Import event emission (optional - graceful fallback if API not available)
 try:
@@ -18,6 +22,7 @@ try:
 except ImportError:
     EVENTS_ENABLED = False
 
+load_dotenv()
 logger = get_logger("SubMaster")
 
 
@@ -37,6 +42,7 @@ class SubMaster:
     """
     SubMaster coordinates Worker Agents to process document sections.
     Supports global context from ResidualAgent.
+    Persists results to MongoDB.
     """
     
     def __init__(
@@ -83,10 +89,119 @@ class SubMaster:
         self.pdf_extractor = None
         self.workers: List[Any] = []
         
+        # MongoDB setup
+        self.mongo_client = None
+        self.mongo_db = None
+        self.submaster_coll = None
+        self.worker_coll = None
+        self._setup_mongodb()
+        
         logger.info(
             f"[{self.sm_id}] Initialized: role={self.role}, pages={self.pages}, "
             f"workers={self.num_workers_per_submaster}, model={self.llm_model}"
         )
+    
+    def _setup_mongodb(self):
+        """Initialize MongoDB connections."""
+        try:
+            uri = os.getenv("MONGO_URI")
+            db_name = os.getenv("MONGO_DB")
+            submaster_coll_name = os.getenv("MONGO_SUBMASTER_COLLECTION", "submaster_results")
+            worker_coll_name = os.getenv("MONGO_WORKER_COLLECTION", "worker_results")
+            
+            if uri:
+                self.mongo_client = MongoClient(uri)
+                self.mongo_db = self.mongo_client[db_name]
+                self.submaster_coll = self.mongo_db[submaster_coll_name]
+                self.worker_coll = self.mongo_db[worker_coll_name]
+                
+                logger.info(
+                    f"[{self.sm_id}] MongoDB connected: {db_name}.{submaster_coll_name}, "
+                    f"{db_name}.{worker_coll_name}"
+                )
+            else:
+                logger.warning(f"[{self.sm_id}] MONGO_URI not set. MongoDB disabled.")
+        except Exception as e:
+            logger.error(f"[{self.sm_id}] MongoDB connection failed: {e}")
+            self.mongo_client = None
+            self.mongo_db = None
+            self.submaster_coll = None
+            self.worker_coll = None
+    
+    def _save_submaster_result(self, result: Dict[str, Any]) -> bool:
+        """Save SubMaster result to MongoDB."""
+        if self.submaster_coll is None:
+            logger.warning(f"[{self.sm_id}] MongoDB not configured. Skipping SubMaster save.")
+            return False
+        
+        try:
+            doc = {
+                "sm_id": self.sm_id,
+                "pipeline_id": self.pipeline_id,
+                "timestamp": time.time(),
+                "role": self.role,
+                "assigned_sections": self.sections,
+                "page_range": self.pages,
+                "num_workers": len(self.workers),
+                "total_pages": result.get("total_pages", 0),
+                "total_chars": result.get("total_chars", 0),
+                "total_entities": result.get("total_entities", 0),
+                "total_keywords": result.get("total_keywords", 0),
+                "llm_successes": result.get("llm_successes", 0),
+                "llm_failures": result.get("llm_failures", 0),
+                "aggregate_summary": result.get("aggregate_summary", ""),
+                "elapsed_time": result.get("elapsed_time", 0),
+                "used_global_context": result.get("used_global_context", False),
+                "status": self.status,
+                "results": result.get("results", [])  # Full page results
+            }
+            
+            insert_result = self.submaster_coll.insert_one(doc)
+            logger.info(
+                f"[{self.sm_id}] ✅ Saved SubMaster result to MongoDB: {insert_result.inserted_id}"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"[{self.sm_id}] Failed to save SubMaster result: {e}")
+            return False
+    
+    def _save_worker_result(self, worker_result: Dict[str, Any]) -> bool:
+        """Save individual Worker result to MongoDB."""
+        if self.worker_coll is None:
+            logger.warning(f"[{self.sm_id}] MongoDB not configured. Skipping Worker save.")
+            return False
+        
+        try:
+            doc = {
+                "worker_id": worker_result.get("worker_id", "unknown"),
+                "submaster_id": self.sm_id,
+                "pipeline_id": self.pipeline_id,
+                "timestamp": time.time(),
+                "page": worker_result.get("page", 0),
+                "section_name": worker_result.get("section_name", "Unknown"),
+                "summary": worker_result.get("summary", ""),
+                "entities": worker_result.get("entities", []),
+                "keywords": worker_result.get("keywords", []),
+                "status": worker_result.get("status", "unknown"),
+                "llm_model": worker_result.get("llm_model", ""),
+                "processing_time": worker_result.get("processing_time", 0),
+                "char_count": worker_result.get("char_count", 0),
+                "error": worker_result.get("error"),
+                "used_global_context": worker_result.get("used_global_context", False)
+            }
+            
+            insert_result = self.worker_coll.insert_one(doc)
+            logger.debug(
+                f"[{self.sm_id}] Saved Worker result to MongoDB: "
+                f"page {doc['page']}, worker {doc['worker_id']}"
+            )
+            return True
+        except Exception as e:
+            logger.error(
+                f"[{self.sm_id}] Failed to save Worker result "
+                f"(page {worker_result.get('page')}): {e}"
+            )
+            return False
     
     def set_global_context(self, context: Dict[str, Any]) -> Dict[str, str]:
         """
@@ -319,6 +434,9 @@ class SubMaster:
                 output.append(page_result)
                 completed_pages += 1
                 
+                # Save Worker result to MongoDB
+                self._save_worker_result(page_result)
+                
                 # Update statistics
                 if page_result.get("status") in ["success", "skipped"]:
                     llm_successes += 1
@@ -346,14 +464,20 @@ class SubMaster:
                 
             except Exception as e:
                 logger.error(f"[{self.sm_id}] Worker failed on page {page_num}: {e}")
-                output.append({
+                error_result = {
                     "page": page_num,
                     "error": str(e),
                     "summary": f"[ERROR: Worker failed]",
                     "status": "error",
                     "entities": [],
-                    "keywords": []
-                })
+                    "keywords": [],
+                    "worker_id": f"{self.sm_id}-W{(page_num % len(self.workers)) + 1}"
+                }
+                output.append(error_result)
+                
+                # Save error result to MongoDB
+                self._save_worker_result(error_result)
+                
                 llm_failures += 1
         
         # Sort results by page number
@@ -371,7 +495,7 @@ class SubMaster:
             f"{llm_successes} successes, {llm_failures} failures"
         )
         
-        return {
+        result = {
             "sm_id": self.sm_id,
             "role": self.role,
             "assigned_sections": self.sections,
@@ -388,6 +512,11 @@ class SubMaster:
             "elapsed_time": elapsed,
             "used_global_context": bool(self.global_context)
         }
+        
+        # Save SubMaster result to MongoDB
+        self._save_submaster_result(result)
+        
+        return result
     
     def _get_section_for_page(self, page_num: int) -> str:
         """Determine which section a page belongs to."""
@@ -427,7 +556,7 @@ class SubMaster:
     
     def _create_error_result(self, pages: List[int], error_msg: str) -> Dict[str, Any]:
         """Create error result when processing cannot proceed."""
-        return {
+        result = {
             "sm_id": self.sm_id,
             "role": self.role,
             "assigned_sections": self.sections,
@@ -454,6 +583,11 @@ class SubMaster:
             "elapsed_time": 0,
             "used_global_context": bool(self.global_context)
         }
+        
+        # Save error result to MongoDB
+        self._save_submaster_result(result)
+        
+        return result
     
     def get_status(self) -> Dict[str, Any]:
         """Get SubMaster status."""
@@ -465,5 +599,6 @@ class SubMaster:
             "has_global_context": bool(self.global_context),
             "context_version": self.global_context.get("version", 0),
             "pipeline_id": self.pipeline_id,
-            "has_residual_agent": self.residual_agent is not None
+            "has_residual_agent": self.residual_agent is not None,
+            "mongodb_enabled": self.submaster_coll is not None
         }
