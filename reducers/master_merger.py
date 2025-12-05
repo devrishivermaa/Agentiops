@@ -73,48 +73,37 @@ class MasterMergerAgent:
     ) -> Dict[str, Any]:
         """
         Create comprehensive final synthesis from all inputs.
-        
-        Args:
-            reducer_results: Complete aggregated reducer output
-            global_context: Global context from ResidualAgent
-            processing_plan: Strategic plan from ResidualAgent
-            
-        Returns:
-            Complete final synthesis with detailed summary
+        OPTIMIZED: Uses only 1 LLM call for speed.
         """
-        logger.info(f"[{self.agent_id}] Starting final document synthesis")
+        logger.info(f"[{self.agent_id}] Starting final document synthesis (FAST MODE)")
         start_time = time.time()
         
-        # Load individual RSM outputs for detailed synthesis
+        # Load individual RSM outputs
         rsm_outputs = self._load_rsm_outputs(reducer_results.get("rsm_results", []))
         
-        # Phase 1: Create executive summary
-        executive_summary = self._create_executive_summary(
+        # FAST MODE: Single LLM call for executive summary + insights
+        # All other sections use direct data extraction (no LLM)
+        combined_result = self._create_combined_synthesis(
             reducer_results, global_context, processing_plan
         )
         
-        # Phase 2: Create detailed synthesis by section
+        # Extract sections from direct data (no LLM)
         detailed_synthesis = self._create_detailed_synthesis(
             rsm_outputs, global_context, processing_plan
         )
         
-        # Phase 3: Extract comprehensive metadata
+        # Extract metadata (no LLM)
         metadata = self._extract_comprehensive_metadata(reducer_results, global_context)
-        
-        # Phase 4: Generate insights and conclusions
-        insights_conclusions = self._generate_insights_conclusions(
-            reducer_results, global_context, processing_plan
-        )
         
         # Compile final output
         final_output = {
             "agent_id": self.agent_id,
             "timestamp": time.time(),
             "processing_time": time.time() - start_time,
-            "executive_summary": executive_summary,
+            "executive_summary": combined_result.get("executive_summary", ""),
             "detailed_synthesis": detailed_synthesis,
             "metadata": metadata,
-            "insights_and_conclusions": insights_conclusions,
+            "insights_and_conclusions": combined_result.get("insights_and_conclusions", {}),
             "global_context_used": global_context,
             "processing_plan_used": processing_plan,
             "source_statistics": {
@@ -132,6 +121,71 @@ class MasterMergerAgent:
         logger.info(f"[{self.agent_id}] Final synthesis complete in {final_output['processing_time']:.2f}s")
         
         return final_output
+
+    def _create_combined_synthesis(
+        self,
+        reducer_results: Dict[str, Any],
+        global_context: Dict[str, Any],
+        processing_plan: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        SINGLE LLM call to generate executive summary + insights.
+        This replaces multiple separate calls for speed.
+        """
+        # Prepare compact input
+        summary = reducer_results.get('final_summary', '')[:1000]
+        themes = global_context.get('cross_document_themes', [])[:5]
+        key_points = reducer_results.get('key_points', [])[:10]
+        insights = reducer_results.get('insights', [])[:10]
+        top_entities = list(dict(sorted(
+            reducer_results.get('entities', {}).items(), 
+            key=lambda x: x[1], reverse=True
+        )[:8]).keys())
+        
+        prompt = f"""Analyze this document and provide a structured response.
+
+DOCUMENT SUMMARY: {summary}
+THEMES: {themes}
+KEY POINTS: {key_points}
+INSIGHTS: {insights}
+TOP ENTITIES: {top_entities}
+
+Provide JSON with:
+{{
+  "executive_summary": "200-300 word professional summary covering main themes, findings, and significance",
+  "key_findings": ["finding1", "finding2", ...],  // 5 main findings
+  "conclusions": "100 word conclusion",
+  "recommendations": ["rec1", "rec2", "rec3"]  // 3 recommendations
+}}
+"""
+        
+        try:
+            result = self.llm.call_with_retry(prompt, parse_json=True, max_tokens=2048)
+            if isinstance(result, dict):
+                return {
+                    "executive_summary": result.get("executive_summary", summary[:500]),
+                    "insights_and_conclusions": {
+                        "key_findings": result.get("key_findings", key_points[:5]),
+                        "conclusions": result.get("conclusions", "Analysis complete."),
+                        "recommendations": result.get("recommendations", []),
+                        "implications": [],
+                        "future_directions": []
+                    }
+                }
+        except Exception as e:
+            logger.warning(f"[{self.agent_id}] Combined synthesis failed, using fallback: {e}")
+        
+        # Fallback: use existing data directly
+        return {
+            "executive_summary": summary[:500] if summary else "Document analysis complete.",
+            "insights_and_conclusions": {
+                "key_findings": [str(kp) for kp in key_points[:5]],
+                "conclusions": "Analysis complete. See detailed sections for findings.",
+                "recommendations": [],
+                "implications": [],
+                "future_directions": []
+            }
+        }
 
     def _load_rsm_outputs(self, rsm_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Load individual RSM outputs from MongoDB for detailed processing."""
@@ -187,7 +241,7 @@ Write a professional summary covering: overview, main themes, key entities, tech
         global_context: Dict[str, Any],
         processing_plan: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Create detailed section-by-section synthesis - OPTIMIZED for speed."""
+        """Create detailed section-by-section synthesis - FAST MODE (NO LLM calls)."""
         
         synthesis = {
             "sections": [],
@@ -195,34 +249,18 @@ Write a professional summary covering: overview, main themes, key entities, tech
             "technical_deep_dive": ""
         }
         
-        # OPTIMIZATION: Process sections in batches of 3 with combined prompts
-        # Instead of individual LLM calls per section
-        BATCH_SIZE = 3
-        for i in range(0, len(rsm_outputs), BATCH_SIZE):
-            batch = rsm_outputs[i:i + BATCH_SIZE]
-            batch_sections = self._synthesize_sections_batch(batch, global_context, processing_plan)
-            synthesis["sections"].extend(batch_sections)
-            
-            # Small delay between batches
-            if i + BATCH_SIZE < len(rsm_outputs):
-                time.sleep(2)
+        # FAST MODE: Process ALL sections without LLM - just extract existing data
+        for rsm in rsm_outputs:
+            section = self._synthesize_sections_batch([rsm], global_context, processing_plan)
+            synthesis["sections"].extend(section)
         
-        # Create cross-section analysis (only if we have sections)
-        if synthesis["sections"]:
-            synthesis["cross_section_analysis"] = self._create_cross_section_analysis(
-                rsm_outputs, global_context
-            )
-        
-        # SKIP technical deep dive if already have enough content
-        # This saves an expensive LLM call
-        if len(synthesis["sections"]) > 3:
-            synthesis["technical_deep_dive"] = self._create_technical_deep_dive_lite(
-                rsm_outputs, global_context
-            )
-        else:
-            synthesis["technical_deep_dive"] = self._create_technical_deep_dive(
-                rsm_outputs, global_context
-            )
+        # FAST MODE: Use lite versions (no LLM calls)
+        synthesis["cross_section_analysis"] = self._create_cross_section_analysis_lite(
+            rsm_outputs, global_context
+        )
+        synthesis["technical_deep_dive"] = self._create_technical_deep_dive_lite(
+            rsm_outputs, global_context
+        )
         
         return synthesis
 
@@ -232,52 +270,33 @@ Write a professional summary covering: overview, main themes, key entities, tech
         global_context: Dict[str, Any],
         processing_plan: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
-        """Synthesize multiple RSM outputs in a single LLM call."""
+        """Synthesize multiple RSM outputs - FAST MODE: Skip LLM, use direct extraction."""
         
-        # Build combined prompt for all sections in batch
-        sections_text = []
-        for rsm in rsm_batch:
-            rsm_id = rsm.get("rsm_id", "Unknown")
-            output = rsm.get("output", {})
-            sections_text.append(f"""
---- SECTION {rsm_id} ---
-Summary: {output.get('enhanced_summary', '')[:500]}
-Key Points: {output.get('key_points', [])[:3]}
-Top Entities: {list(dict(sorted(output.get('entities', {}).items(), key=lambda x: x[1], reverse=True)[:5]).keys())}
-""")
-        
-        prompt = f"""Synthesize these document sections concisely.
-
-{chr(10).join(sections_text)}
-
-Global Themes: {global_context.get('cross_document_themes', [])[:3]}
-
-For EACH section, provide a 100-150 word synthesis focusing on main content and key findings.
-
-Output format (JSON array):
-[
-  {{"section_id": "RSM-001", "synthesis": "...", "key_entities": ["entity1", "entity2"]}},
-  ...
-]
-"""
-        
-        try:
-            response = self.llm.call_with_retry(prompt, parse_json=True, max_tokens=2048)
-            if isinstance(response, list):
-                return response
-        except Exception as e:
-            logger.warning(f"[{self.agent_id}] Batch synthesis failed, using fallback: {e}")
-        
-        # Fallback: create minimal sections without LLM
+        # OPTIMIZATION: Skip LLM entirely for speed - just extract and format existing data
+        # This is much faster and avoids rate limiting/JSON parsing issues
         sections = []
         for rsm in rsm_batch:
             rsm_id = rsm.get("rsm_id", "Unknown")
             output = rsm.get("output", {})
+            
+            # Use existing enhanced_summary directly
+            summary = output.get('enhanced_summary', '')
+            if not summary:
+                # Fallback to combining key points
+                key_points = output.get('key_points', [])
+                summary = '. '.join(str(kp) for kp in key_points[:5]) if key_points else "No summary available."
+            
             sections.append({
                 "section_id": rsm_id,
-                "synthesis": output.get('enhanced_summary', '')[:300],
-                "key_entities": list(dict(sorted(output.get('entities', {}).items(), key=lambda x: x[1], reverse=True)[:5]).keys())
+                "synthesis": summary[:400],  # Limit length
+                "key_entities": list(dict(sorted(
+                    output.get('entities', {}).items(), 
+                    key=lambda x: x[1], 
+                    reverse=True
+                )[:5]).keys()),
+                "main_themes": output.get('key_points', [])[:3]
             })
+        
         return sections
 
     def _create_technical_deep_dive_lite(
@@ -300,6 +319,36 @@ This document covers {len(rsm_outputs)} major sections with the following key te
 {', '.join([f"{term} ({count})" for term, count in top_terms[:10]])}.
 
 Primary technical focus areas identified across the document include {', '.join([t[0] for t in top_terms[:5]])}.
+"""
+
+    def _create_cross_section_analysis_lite(
+        self,
+        rsm_outputs: List[Dict[str, Any]],
+        global_context: Dict[str, Any]
+    ) -> str:
+        """Lightweight cross-section analysis without LLM call."""
+        all_themes = []
+        all_entities = {}
+        
+        for rsm in rsm_outputs:
+            output = rsm.get("output", {})
+            all_themes.extend(output.get("key_points", []))
+            for entity, count in output.get("entities", {}).items():
+                all_entities[entity] = all_entities.get(entity, 0) + count
+        
+        top_entities = sorted(all_entities.items(), key=lambda x: x[1], reverse=True)[:10]
+        unique_themes = list(set(str(t) for t in all_themes))[:8]
+        
+        themes_from_context = global_context.get('cross_document_themes', [])[:5]
+        
+        return f"""Cross-Section Analysis:
+The document spans {len(rsm_outputs)} major sections with interconnected themes.
+
+Key Recurring Entities: {', '.join([f"{e[0]} ({e[1]})" for e in top_entities[:8]])}.
+
+Common Themes: {', '.join(unique_themes)}.
+
+Document-Wide Patterns: {', '.join(str(t) for t in themes_from_context) if themes_from_context else 'Multiple interconnected topics identified'}.
 """
 
     def _synthesize_section(
