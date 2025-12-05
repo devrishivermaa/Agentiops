@@ -427,8 +427,9 @@ def run_reducer_global(metadata: Dict[str, Any] = None, mapper_workers_override:
     )
     logger.info(f"Assumed mapper workers per submaster = {mapper_workers}")
 
-    # reducer workers per rsm is ceil(mapper_workers / 2)
-    reducer_workers_per_rsm = math.ceil(int(mapper_workers) / 2)
+    # reducer workers per rsm - limit to reduce API rate limiting
+    # Use 1 worker per RSM to avoid overwhelming the LLM API
+    reducer_workers_per_rsm = 1  # Reduced from ceil(mapper_workers/2) to avoid rate limits
     logger.info(f"Reducer workers per submaster = {reducer_workers_per_rsm}")
 
     # Prepare global context from latest residual doc if available
@@ -436,9 +437,13 @@ def run_reducer_global(metadata: Dict[str, Any] = None, mapper_workers_override:
     res_doc = residual_coll.find_one(sort=[("_id", -1)])
     global_context = res_doc.get("global_context", {}) if res_doc else metadata.get("global_context", {})
 
-    # Ensure Ray is initialized
+    # Ensure Ray is initialized with memory limits
     if not ray.is_initialized():
-        ray.init(ignore_reinit_error=True)
+        ray.init(
+            ignore_reinit_error=True,
+            num_cpus=4,
+            object_store_memory=500 * 1024 * 1024,  # 500MB
+        )
 
     rsm_refs = []
     for i, grp in enumerate(groups):

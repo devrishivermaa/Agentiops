@@ -19,6 +19,9 @@ import {
   BarChart3,
   Layers,
   Globe,
+  GitMerge,
+  FileOutput,
+  Brain,
 } from "lucide-react";
 
 interface AgentDetailProps {
@@ -185,29 +188,127 @@ export const AgentDetailPanel: React.FC<AgentDetailProps> = ({
         },
       });
     } else {
-      // Worker
-      outputs.push({
-        type: "summary",
-        content:
-          agent.metadata?.summary ||
-          `Data extraction finished for Page ${agent.metadata?.pages || "?"}.`,
-      });
-      if (
-        agent.metadata?.entities?.length ||
-        agent.metadata?.keywords?.length
-      ) {
+      // Worker or Reducer Pipeline Agents
+      if (agent.type === AgentType.REDUCER_SUBMASTER) {
+        outputs.push({
+          type: "summary",
+          content:
+            "Reducer SubMasters completed processing mapper results. Enhanced summaries generated.",
+        });
         outputs.push({
           type: "json",
-          label: "page_analysis.json",
-          size: "Page Data",
+          label: "reducer_submaster_output.json",
+          size: "Aggregated Data",
           icon: <FileJson size={18} />,
           jsonContent: {
             agent_id: agent.id,
-            page: agent.metadata?.pages,
-            entities: agent.metadata?.entities || [],
-            keywords: agent.metadata?.keywords || [],
+            role: agent.metadata?.role,
+            num_results: agent.metadata?.numResults || "N/A",
+            elapsed_time: agent.metadata?.elapsedTime
+              ? `${agent.metadata.elapsedTime.toFixed(2)}s`
+              : "N/A",
+            status: "completed",
           },
         });
+      } else if (agent.type === AgentType.REDUCER_RESIDUAL) {
+        outputs.push({
+          type: "summary",
+          content:
+            "Global context built from reducer results. Processing plan created for Master Merger.",
+        });
+        outputs.push({
+          type: "json",
+          label: "global_context.json",
+          size: "Context Data",
+          icon: <FileJson size={18} />,
+          jsonContent: {
+            agent_id: agent.id,
+            role: agent.metadata?.role,
+            context_size: agent.metadata?.contextSize || "N/A",
+            plan_size: agent.metadata?.planSize || "N/A",
+            elapsed_time: agent.metadata?.elapsedTime
+              ? `${agent.metadata.elapsedTime.toFixed(2)}s`
+              : "N/A",
+          },
+        });
+      } else if (agent.type === AgentType.MASTER_MERGER) {
+        outputs.push({
+          type: "summary",
+          content:
+            "Master Merger synthesized final comprehensive document with executive summary, insights, and conclusions.",
+        });
+        outputs.push({
+          type: "json",
+          label: "final_synthesis.json",
+          size: "Synthesis Data",
+          icon: <FileJson size={18} />,
+          jsonContent: {
+            agent_id: agent.id,
+            role: agent.metadata?.role,
+            result_size: agent.metadata?.resultSize || "N/A",
+            elapsed_time: agent.metadata?.elapsedTime
+              ? `${agent.metadata.elapsedTime.toFixed(2)}s`
+              : "N/A",
+            sections: [
+              "Executive Summary",
+              "Detailed Synthesis",
+              "Metadata",
+              "Insights & Conclusions",
+            ],
+          },
+        });
+        if (pipeline.status === "completed") {
+          outputs.push({
+            type: "download",
+            label: "Download Final Summary (PDF)",
+            size: outputPaths.reportPath ? "Available" : "Generating...",
+            icon: <FileText size={18} />,
+            action: downloadReport,
+          });
+        }
+      } else if (agent.type === AgentType.PDF_GENERATOR) {
+        outputs.push({
+          type: "summary",
+          content: agent.metadata?.pdfPath
+            ? `PDF report generated successfully at: ${agent.metadata.pdfPath}`
+            : "PDF report generation completed.",
+        });
+        if (agent.metadata?.pdfPath || pipeline.status === "completed") {
+          outputs.push({
+            type: "download",
+            label: "Download PDF Report",
+            size: "Available",
+            icon: <FileText size={18} />,
+            action: downloadReport,
+          });
+        }
+      } else {
+        // Regular Worker
+        outputs.push({
+          type: "summary",
+          content:
+            agent.metadata?.summary ||
+            `Data extraction finished for Page ${
+              agent.metadata?.pages || "?"
+            }.`,
+        });
+        if (
+          agent.metadata?.entities?.length ||
+          agent.metadata?.keywords?.length
+        ) {
+          outputs.push({
+            type: "json",
+            label: "page_analysis.json",
+            size: "Page Data",
+            icon: <FileJson size={18} />,
+            jsonContent: {
+              agent_id: agent.id,
+              page: agent.metadata?.pages,
+              entities: agent.metadata?.entities || [],
+              keywords: agent.metadata?.keywords || [],
+            },
+          });
+        }
       }
     }
 
@@ -245,6 +346,16 @@ export const AgentDetailPanel: React.FC<AgentDetailProps> = ({
         return "from-amber-500/20 to-amber-600/5 text-amber-400 border-amber-500/30";
       case AgentType.RESIDUAL:
         return "from-cyan-500/20 to-cyan-600/5 text-cyan-400 border-cyan-500/30";
+      case AgentType.REDUCER:
+        return "from-emerald-500/20 to-emerald-600/5 text-emerald-400 border-emerald-500/30";
+      case AgentType.REDUCER_SUBMASTER:
+        return "from-purple-500/20 to-purple-600/5 text-purple-400 border-purple-500/30";
+      case AgentType.REDUCER_RESIDUAL:
+        return "from-pink-500/20 to-pink-600/5 text-pink-400 border-pink-500/30";
+      case AgentType.MASTER_MERGER:
+        return "from-orange-500/20 to-orange-600/5 text-orange-400 border-orange-500/30";
+      case AgentType.PDF_GENERATOR:
+        return "from-rose-500/20 to-rose-600/5 text-rose-400 border-rose-500/30";
       default:
         return "from-blue-500/20 to-blue-600/5 text-blue-400 border-blue-500/30";
     }
@@ -284,6 +395,16 @@ export const AgentDetailPanel: React.FC<AgentDetailProps> = ({
                   <BookOpen size={28} />
                 ) : agent.type === AgentType.RESIDUAL ? (
                   <Globe size={28} />
+                ) : agent.type === AgentType.REDUCER ? (
+                  <Layers size={28} />
+                ) : agent.type === AgentType.REDUCER_SUBMASTER ? (
+                  <Layers size={28} />
+                ) : agent.type === AgentType.REDUCER_RESIDUAL ? (
+                  <Brain size={28} />
+                ) : agent.type === AgentType.MASTER_MERGER ? (
+                  <GitMerge size={28} />
+                ) : agent.type === AgentType.PDF_GENERATOR ? (
+                  <FileOutput size={28} />
                 ) : (
                   <FileText size={28} />
                 )}

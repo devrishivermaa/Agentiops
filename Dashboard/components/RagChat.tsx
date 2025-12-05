@@ -330,7 +330,6 @@ export function RagChat() {
 
   const isReady =
     pipeline.status === "completed" ||
-    session.status === "completed" ||
     session.status === SessionStatus.COMPLETED;
 
   return (

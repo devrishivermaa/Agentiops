@@ -12,6 +12,10 @@ import {
   Cpu,
   Globe,
   Layers,
+  GitMerge,
+  FileOutput,
+  Brain,
+  Sparkles,
 } from "lucide-react";
 import { spawnVariants } from "./animations";
 
@@ -25,6 +29,16 @@ export const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick }) => {
   const isSubMaster = agent.type === AgentType.SUBMASTER;
   const isResidual = agent.type === AgentType.RESIDUAL;
   const isReducer = agent.type === AgentType.REDUCER;
+
+  // New Reducer Pipeline Agent Types
+  const isReducerSubmaster = agent.type === AgentType.REDUCER_SUBMASTER;
+  const isReducerResidual = agent.type === AgentType.REDUCER_RESIDUAL;
+  const isMasterMerger = agent.type === AgentType.MASTER_MERGER;
+  const isPdfGenerator = agent.type === AgentType.PDF_GENERATOR;
+
+  // Check if this is a reducer pipeline agent
+  const isReducerPipelineAgent =
+    isReducerSubmaster || isReducerResidual || isMasterMerger || isPdfGenerator;
 
   const statusConfig = {
     [AgentStatus.SPAWNED]: {
@@ -132,6 +146,14 @@ export const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick }) => {
             ? "w-44 min-h-[120px]"
             : isReducer
             ? "w-52 min-h-[130px]"
+            : isReducerSubmaster
+            ? "w-52 min-h-[130px]"
+            : isReducerResidual
+            ? "w-48 min-h-[120px]"
+            : isMasterMerger
+            ? "w-52 min-h-[130px]"
+            : isPdfGenerator
+            ? "w-44 min-h-[110px]"
             : "w-32 min-h-[100px]"
         }
       `}
@@ -158,6 +180,14 @@ export const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick }) => {
             ? "bg-gradient-to-br from-cyan-500/20 to-cyan-600/10 text-cyan-400"
             : isReducer
             ? "bg-gradient-to-br from-emerald-500/20 to-emerald-600/10 text-emerald-400"
+            : isReducerSubmaster
+            ? "bg-gradient-to-br from-purple-500/20 to-purple-600/10 text-purple-400"
+            : isReducerResidual
+            ? "bg-gradient-to-br from-pink-500/20 to-pink-600/10 text-pink-400"
+            : isMasterMerger
+            ? "bg-gradient-to-br from-orange-500/20 to-orange-600/10 text-orange-400"
+            : isPdfGenerator
+            ? "bg-gradient-to-br from-rose-500/20 to-rose-600/10 text-rose-400"
             : "bg-gradient-to-br from-zinc-700/50 to-zinc-800/50 text-zinc-400"
         }
       `}
@@ -170,6 +200,14 @@ export const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick }) => {
           <Globe size={22} />
         ) : isReducer ? (
           <Layers size={24} />
+        ) : isReducerSubmaster ? (
+          <Layers size={22} />
+        ) : isReducerResidual ? (
+          <Brain size={22} />
+        ) : isMasterMerger ? (
+          <GitMerge size={22} />
+        ) : isPdfGenerator ? (
+          <FileOutput size={20} />
         ) : (
           <FileText size={18} />
         )}
@@ -228,8 +266,8 @@ export const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick }) => {
         </span>
       </div>
 
-      {/* Progress Bar for SubMaster/Master/Residual */}
-      {(isSubMaster || isMaster || isResidual) &&
+      {/* Progress Bar for SubMaster/Master/Residual and Reducer Pipeline Agents */}
+      {(isSubMaster || isMaster || isResidual || isReducerPipelineAgent) &&
         typeof agent.metadata?.progress === "number" && (
           <div className="w-full px-1 mt-auto pt-3">
             <div className="flex justify-between text-[10px] text-zinc-500 mb-1.5 font-medium">

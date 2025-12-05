@@ -4,6 +4,12 @@ export enum AgentType {
   WORKER = "worker",
   RESIDUAL = "residual",
   REDUCER = "reducer",
+  // New Reducer Pipeline Agent Types
+  REDUCER_SUBMASTER = "reducer_submaster",
+  REDUCER_WORKER = "reducer_worker",
+  REDUCER_RESIDUAL = "reducer_residual",
+  MASTER_MERGER = "master_merger",
+  PDF_GENERATOR = "pdf_generator",
 }
 
 export enum AgentStatus {
@@ -53,6 +59,17 @@ export interface AgentNode {
     summary?: string;
     entities?: string[];
     keywords?: string[];
+    // Reducer pipeline metadata
+    submasterCount?: number;
+    numResults?: number;
+    elapsedTime?: number;
+    contextSize?: number;
+    planSize?: number;
+    resultSize?: number;
+    pdfPath?: string;
+    status?: string;
+    current?: number;
+    total?: number;
   };
   children?: string[]; // IDs of children
   events: AgentEventLog[]; // All events for this agent
@@ -138,10 +155,44 @@ export const EventTypes = {
   WORKER_FAILED: "worker.failed",
   WORKER_CONTEXT_RECEIVED: "worker.context_received",
 
-  // Reducer
+  // Reducer (basic aggregation)
   REDUCER_STARTED: "reducer.started",
   REDUCER_AGGREGATING: "reducer.aggregating",
   REDUCER_COMPLETED: "reducer.completed",
+
+  // Reducer SubMaster (full reducer pipeline)
+  REDUCER_SUBMASTER_STARTED: "reducer_submaster.started",
+  REDUCER_SUBMASTER_PROCESSING: "reducer_submaster.processing",
+  REDUCER_SUBMASTER_PROGRESS: "reducer_submaster.progress",
+  REDUCER_SUBMASTER_COMPLETED: "reducer_submaster.completed",
+  REDUCER_SUBMASTER_FAILED: "reducer_submaster.failed",
+
+  // Reducer Worker
+  REDUCER_WORKER_SPAWNED: "reducer_worker.spawned",
+  REDUCER_WORKER_PROCESSING: "reducer_worker.processing",
+  REDUCER_WORKER_COMPLETED: "reducer_worker.completed",
+
+  // Reducer Residual Agent
+  REDUCER_RESIDUAL_STARTED: "reducer_residual.started",
+  REDUCER_RESIDUAL_CONTEXT_UPDATING: "reducer_residual.context_updating",
+  REDUCER_RESIDUAL_CONTEXT_UPDATED: "reducer_residual.context_updated",
+  REDUCER_RESIDUAL_PLAN_CREATING: "reducer_residual.plan_creating",
+  REDUCER_RESIDUAL_PLAN_CREATED: "reducer_residual.plan_created",
+  REDUCER_RESIDUAL_COMPLETED: "reducer_residual.completed",
+
+  // Master Merger
+  MASTER_MERGER_STARTED: "master_merger.started",
+  MASTER_MERGER_SYNTHESIZING: "master_merger.synthesizing",
+  MASTER_MERGER_EXECUTIVE_SUMMARY: "master_merger.executive_summary",
+  MASTER_MERGER_DETAILED_SYNTHESIS: "master_merger.detailed_synthesis",
+  MASTER_MERGER_INSIGHTS: "master_merger.insights",
+  MASTER_MERGER_COMPLETED: "master_merger.completed",
+  MASTER_MERGER_FAILED: "master_merger.failed",
+
+  // PDF Generation
+  PDF_GENERATION_STARTED: "pdf.generation_started",
+  PDF_GENERATION_COMPLETED: "pdf.generation_completed",
+  PDF_GENERATION_FAILED: "pdf.generation_failed",
 
   // System
   SYSTEM_STATS: "system.stats",
