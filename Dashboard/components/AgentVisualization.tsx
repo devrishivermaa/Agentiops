@@ -20,6 +20,9 @@ import {
   Timer,
   Activity,
   TrendingUp,
+  GitMerge,
+  FileOutput,
+  Brain,
 } from "lucide-react";
 import { TreeNode } from "./agent/TreeNode";
 import { AgentDetailPanel } from "./agent/AgentDetailPanel";
@@ -54,6 +57,20 @@ export const AgentVisualization: React.FC = () => {
   const reducer = agentList.find((a) => a.type === AgentType.REDUCER);
   const submasters = agentList.filter((a) => a.type === AgentType.SUBMASTER);
   const workers = agentList.filter((a) => a.type === AgentType.WORKER);
+
+  // Reducer Pipeline Agents
+  const reducerSubmasters = agentList.find(
+    (a) => a.type === AgentType.REDUCER_SUBMASTER
+  );
+  const reducerResidual = agentList.find(
+    (a) => a.type === AgentType.REDUCER_RESIDUAL
+  );
+  const masterMerger = agentList.find(
+    (a) => a.type === AgentType.MASTER_MERGER
+  );
+  const pdfGenerator = agentList.find(
+    (a) => a.type === AgentType.PDF_GENERATOR
+  );
 
   // Calculate stats
   const totalAgents = agentList.length;
@@ -319,7 +336,7 @@ export const AgentVisualization: React.FC = () => {
             </div>
 
             {/* Center: Architecture Pills (hidden on mobile) */}
-            <div className="hidden lg:flex items-center gap-2">
+            <div className="hidden lg:flex items-center gap-2 flex-wrap">
               {residual && (
                 <motion.button
                   initial={{ opacity: 0, y: -10 }}
@@ -345,6 +362,61 @@ export const AgentVisualization: React.FC = () => {
                   <span className="text-xs font-medium text-emerald-400">
                     Reducer
                   </span>
+                </motion.button>
+              )}
+              {/* Reducer Pipeline Agents */}
+              {reducerSubmasters && (
+                <motion.button
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 }}
+                  onClick={() => setSelectedAgent(reducerSubmasters)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-500/10 rounded-lg border border-purple-500/20 hover:bg-purple-500/20 transition-all"
+                >
+                  <Layers size={14} className="text-purple-400" />
+                  <span className="text-xs font-medium text-purple-400">
+                    Reducer SM
+                  </span>
+                </motion.button>
+              )}
+              {reducerResidual && (
+                <motion.button
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.15 }}
+                  onClick={() => setSelectedAgent(reducerResidual)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-pink-500/10 rounded-lg border border-pink-500/20 hover:bg-pink-500/20 transition-all"
+                >
+                  <Brain size={14} className="text-pink-400" />
+                  <span className="text-xs font-medium text-pink-400">
+                    Context
+                  </span>
+                </motion.button>
+              )}
+              {masterMerger && (
+                <motion.button
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  onClick={() => setSelectedAgent(masterMerger)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500/10 rounded-lg border border-orange-500/20 hover:bg-orange-500/20 transition-all"
+                >
+                  <GitMerge size={14} className="text-orange-400" />
+                  <span className="text-xs font-medium text-orange-400">
+                    Merger
+                  </span>
+                </motion.button>
+              )}
+              {pdfGenerator && (
+                <motion.button
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.25 }}
+                  onClick={() => setSelectedAgent(pdfGenerator)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-500/10 rounded-lg border border-rose-500/20 hover:bg-rose-500/20 transition-all"
+                >
+                  <FileOutput size={14} className="text-rose-400" />
+                  <span className="text-xs font-medium text-rose-400">PDF</span>
                 </motion.button>
               )}
               {submasters.length > 0 && (

@@ -63,10 +63,44 @@ class EventType(str, Enum):
     WORKER_FAILED = "worker.failed"
     WORKER_CONTEXT_RECEIVED = "worker.context_received"
     
-    # Reducer events
+    # Reducer events (basic aggregation)
     REDUCER_STARTED = "reducer.started"
     REDUCER_AGGREGATING = "reducer.aggregating"
     REDUCER_COMPLETED = "reducer.completed"
+    
+    # Reducer SubMaster events (full reducer pipeline)
+    REDUCER_SUBMASTER_STARTED = "reducer_submaster.started"
+    REDUCER_SUBMASTER_PROCESSING = "reducer_submaster.processing"
+    REDUCER_SUBMASTER_PROGRESS = "reducer_submaster.progress"
+    REDUCER_SUBMASTER_COMPLETED = "reducer_submaster.completed"
+    REDUCER_SUBMASTER_FAILED = "reducer_submaster.failed"
+    
+    # Reducer Worker events
+    REDUCER_WORKER_SPAWNED = "reducer_worker.spawned"
+    REDUCER_WORKER_PROCESSING = "reducer_worker.processing"
+    REDUCER_WORKER_COMPLETED = "reducer_worker.completed"
+    
+    # Reducer Residual Agent events
+    REDUCER_RESIDUAL_STARTED = "reducer_residual.started"
+    REDUCER_RESIDUAL_CONTEXT_UPDATING = "reducer_residual.context_updating"
+    REDUCER_RESIDUAL_CONTEXT_UPDATED = "reducer_residual.context_updated"
+    REDUCER_RESIDUAL_PLAN_CREATING = "reducer_residual.plan_creating"
+    REDUCER_RESIDUAL_PLAN_CREATED = "reducer_residual.plan_created"
+    REDUCER_RESIDUAL_COMPLETED = "reducer_residual.completed"
+    
+    # Master Merger events
+    MASTER_MERGER_STARTED = "master_merger.started"
+    MASTER_MERGER_SYNTHESIZING = "master_merger.synthesizing"
+    MASTER_MERGER_EXECUTIVE_SUMMARY = "master_merger.executive_summary"
+    MASTER_MERGER_DETAILED_SYNTHESIS = "master_merger.detailed_synthesis"
+    MASTER_MERGER_INSIGHTS = "master_merger.insights"
+    MASTER_MERGER_COMPLETED = "master_merger.completed"
+    MASTER_MERGER_FAILED = "master_merger.failed"
+    
+    # PDF Generation events
+    PDF_GENERATION_STARTED = "pdf.generation_started"
+    PDF_GENERATION_COMPLETED = "pdf.generation_completed"
+    PDF_GENERATION_FAILED = "pdf.generation_failed"
     
     # System events
     SYSTEM_STATS = "system.stats"
@@ -84,13 +118,29 @@ class Event:
     agent_id: Optional[str] = None
     agent_type: Optional[str] = None  # "master", "submaster", "worker"
     
+    @staticmethod
+    def _sanitize_for_json(obj: Any) -> Any:
+        """Recursively convert non-JSON-serializable types to strings"""
+        if isinstance(obj, dict):
+            return {k: Event._sanitize_for_json(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [Event._sanitize_for_json(item) for item in obj]
+        elif hasattr(obj, '__class__') and obj.__class__.__name__ == 'ObjectId':
+            return str(obj)
+        elif isinstance(obj, datetime):
+            return obj.isoformat()
+        elif isinstance(obj, bytes):
+            return obj.decode('utf-8', errors='replace')
+        else:
+            return obj
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert event to dictionary for JSON serialization"""
         return {
             "event_type": self.event_type.value if isinstance(self.event_type, EventType) else self.event_type,
             "pipeline_id": self.pipeline_id,
             "timestamp": self.timestamp,
-            "data": self.data,
+            "data": Event._sanitize_for_json(self.data),
             "agent_id": self.agent_id,
             "agent_type": self.agent_type,
         }

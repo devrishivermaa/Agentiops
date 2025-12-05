@@ -20,7 +20,7 @@ logger = get_logger("LLMHelper")
 # ============================================================
 
 class GlobalRateLimiter:
-    def __init__(self, max_requests_per_minute: int = 50, max_requests_per_day: int = 5000):
+    def __init__(self, max_requests_per_minute: int = 10, max_requests_per_day: int = 5000):
         self.max_requests_per_minute = max_requests_per_minute
         self.max_requests_per_day = max_requests_per_day
         
@@ -28,7 +28,8 @@ class GlobalRateLimiter:
         self.request_times_day: List[float] = []
         
         self.lock = threading.Lock()
-        self.min_delay_between_requests = 1.2
+        # Increase delay significantly to avoid rate limits across distributed workers
+        self.min_delay_between_requests = 6.0  # 6 seconds between requests per worker
         self.last_request_time = 0.0
         
         logger.info(
@@ -124,12 +125,19 @@ class LLMProcessor:
 
             except Exception as e:
                 last_error = e
+                error_str = str(e).lower()
 
                 # daily quota needs immediate fail
-                if isinstance(e, RuntimeError) and "quota" in str(e).lower():
+                if isinstance(e, RuntimeError) and "quota" in error_str:
                     raise
 
-                wait = min(120, (2 ** attempt) * 5)
+                # Rate limit - wait longer
+                if "429" in str(e) or "rate" in error_str:
+                    wait = min(180, (2 ** attempt) * 15)  # Longer waits for rate limits
+                    logger.warning(f"[{self.caller_id}] Rate limited, waiting {wait}s before retry")
+                else:
+                    wait = min(120, (2 ** attempt) * 5)
+                    
                 time.sleep(wait)
 
         raise RuntimeError(f"LLM failed after retries: {last_error}")

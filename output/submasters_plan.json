@@ -1,6 +1,6 @@
 {
   "num_submasters": 4,
-  "distribution_strategy": "Each SubMaster is assigned a distinct section or logical grouping of sections to ensure balanced workload and specialized focus on key document parts.",
+  "distribution_strategy": "Each SubMaster is assigned a distinct section or logical grouping of sections to ensure comprehensive coverage while maintaining focus on their specialized roles.",
   "submasters": [
     {
       "submaster_id": "SM-001",
@@ -17,7 +17,7 @@
     },
     {
       "submaster_id": "SM-002",
-      "role": "Extract Methods from Body",
+      "role": "Extract Key Findings from Body",
       "assigned_sections": [
         "Body"
       ],
@@ -29,7 +29,7 @@
     },
     {
       "submaster_id": "SM-003",
-      "role": "Extract Results from Body",
+      "role": "Analyze Methodology and Results",
       "assigned_sections": [
         "Body"
       ],
@@ -41,7 +41,7 @@
     },
     {
       "submaster_id": "SM-004",
-      "role": "Summarize Conclusion",
+      "role": "Summarize Conclusion and Recommendations",
       "assigned_sections": [
         "Conclusion"
       ],

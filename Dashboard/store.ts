@@ -325,6 +325,20 @@ export const useStore = create<AppState>((set, get) => ({
       EventTypes.WORKER_FAILED,
       EventTypes.REDUCER_STARTED,
       EventTypes.REDUCER_COMPLETED,
+      // Reducer Pipeline Events (new)
+      EventTypes.REDUCER_SUBMASTER_STARTED,
+      EventTypes.REDUCER_SUBMASTER_COMPLETED,
+      EventTypes.REDUCER_SUBMASTER_FAILED,
+      EventTypes.REDUCER_RESIDUAL_STARTED,
+      EventTypes.REDUCER_RESIDUAL_CONTEXT_UPDATED,
+      EventTypes.REDUCER_RESIDUAL_PLAN_CREATED,
+      EventTypes.REDUCER_RESIDUAL_COMPLETED,
+      EventTypes.MASTER_MERGER_STARTED,
+      EventTypes.MASTER_MERGER_COMPLETED,
+      EventTypes.MASTER_MERGER_FAILED,
+      EventTypes.PDF_GENERATION_STARTED,
+      EventTypes.PDF_GENERATION_COMPLETED,
+      EventTypes.PDF_GENERATION_FAILED,
     ]);
 
     // Check for duplicate events (same type + agent within 2 seconds)
@@ -393,6 +407,57 @@ export const useStore = create<AppState>((set, get) => ({
         break;
       case EventTypes.REDUCER_COMPLETED:
         message = `Reducer completed - final output ready`;
+        break;
+      // Reducer Pipeline Messages
+      case EventTypes.REDUCER_SUBMASTER_STARTED:
+        message = `🔄 Reducer SubMasters started`;
+        break;
+      case EventTypes.REDUCER_SUBMASTER_COMPLETED:
+        message = `✅ Reducer SubMasters completed`;
+        break;
+      case EventTypes.REDUCER_SUBMASTER_FAILED:
+        message = `❌ Reducer SubMasters failed`;
+        break;
+      case EventTypes.REDUCER_RESIDUAL_STARTED:
+        message = `🧠 Reducer Residual Agent started`;
+        break;
+      case EventTypes.REDUCER_RESIDUAL_CONTEXT_UPDATING:
+        message = `📊 Updating global context from reducer results`;
+        break;
+      case EventTypes.REDUCER_RESIDUAL_CONTEXT_UPDATED:
+        message = `✅ Global context updated (${
+          event.data.context_size || "?"
+        } chars)`;
+        break;
+      case EventTypes.REDUCER_RESIDUAL_PLAN_CREATING:
+        message = `📝 Creating processing plan`;
+        break;
+      case EventTypes.REDUCER_RESIDUAL_PLAN_CREATED:
+        message = `✅ Processing plan created`;
+        break;
+      case EventTypes.REDUCER_RESIDUAL_COMPLETED:
+        message = `✅ Reducer Residual Agent completed`;
+        break;
+      case EventTypes.MASTER_MERGER_STARTED:
+        message = `🔀 Master Merger started - synthesizing final document`;
+        break;
+      case EventTypes.MASTER_MERGER_SYNTHESIZING:
+        message = `📝 Synthesizing final document...`;
+        break;
+      case EventTypes.MASTER_MERGER_COMPLETED:
+        message = `✅ Master Merger completed - final synthesis ready`;
+        break;
+      case EventTypes.MASTER_MERGER_FAILED:
+        message = `❌ Master Merger failed: ${event.data.error || "Unknown"}`;
+        break;
+      case EventTypes.PDF_GENERATION_STARTED:
+        message = `📄 Generating PDF report...`;
+        break;
+      case EventTypes.PDF_GENERATION_COMPLETED:
+        message = `✅ PDF report generated successfully`;
+        break;
+      case EventTypes.PDF_GENERATION_FAILED:
+        message = `❌ PDF generation failed`;
         break;
     }
 
@@ -773,6 +838,319 @@ export const useStore = create<AppState>((set, get) => ({
         if (event.data.json_path) {
           setOutputPaths({ jsonPath: event.data.json_path });
         }
+        break;
+
+      // ============================================
+      // REDUCER PIPELINE EVENTS (FULL UNIFIED FLOW)
+      // ============================================
+
+      case EventTypes.REDUCER_SUBMASTER_STARTED:
+        setPipeline({ currentStep: "Reducer SubMasters" });
+        // Create reducer submasters node
+        addAgent({
+          id: "reducer_submasters",
+          type: AgentType.REDUCER_SUBMASTER,
+          status: AgentStatus.PROCESSING,
+          label: "Reducer SubMasters",
+          parentId: "master",
+          metadata: {
+            role: "Aggregate & Enhance Mapper Results",
+            progress: 0,
+          },
+          events: [
+            {
+              timestamp,
+              eventType: event.event_type,
+              message: "Started processing mapper results",
+            },
+          ],
+          startTime: Date.now(),
+        });
+        break;
+
+      case EventTypes.REDUCER_SUBMASTER_PROCESSING:
+        updateAgent("reducer_submasters", {
+          status: AgentStatus.PROCESSING,
+        });
+        break;
+
+      case EventTypes.REDUCER_SUBMASTER_PROGRESS:
+        updateAgent("reducer_submasters", {
+          metadata: {
+            ...get().agents["reducer_submasters"]?.metadata,
+            progress: event.data?.progress_percent || 0,
+          },
+        });
+        break;
+
+      case EventTypes.REDUCER_SUBMASTER_COMPLETED:
+        setPipeline({ currentStep: "Reducer Residual Agent" });
+        updateAgent("reducer_submasters", {
+          status: AgentStatus.COMPLETED,
+          metadata: {
+            ...get().agents["reducer_submasters"]?.metadata,
+            progress: 100,
+            numResults: event.data?.num_results,
+            elapsedTime: event.data?.elapsed_time,
+          },
+          endTime: Date.now(),
+        });
+        break;
+
+      case EventTypes.REDUCER_SUBMASTER_FAILED:
+        updateAgent("reducer_submasters", {
+          status: AgentStatus.FAILED,
+          endTime: Date.now(),
+        });
+        break;
+
+      case EventTypes.REDUCER_RESIDUAL_STARTED:
+        setPipeline({ currentStep: "Building Global Context" });
+        // Create reducer residual agent node
+        addAgent({
+          id: "reducer_residual",
+          type: AgentType.REDUCER_RESIDUAL,
+          status: AgentStatus.PROCESSING,
+          label: "Reducer Residual Agent",
+          parentId: "reducer_submasters",
+          metadata: {
+            role: "Global Context Builder",
+            progress: 0,
+          },
+          events: [
+            {
+              timestamp,
+              eventType: event.event_type,
+              message: "Started building global context",
+            },
+          ],
+          startTime: Date.now(),
+        });
+        break;
+
+      case EventTypes.REDUCER_RESIDUAL_CONTEXT_UPDATING:
+        updateAgent("reducer_residual", {
+          metadata: {
+            ...get().agents["reducer_residual"]?.metadata,
+            progress: 25,
+            status: "Updating context from reducer results",
+          },
+        });
+        addAgentEvent("reducer_residual", {
+          timestamp,
+          eventType: event.event_type,
+          message: "Updating context from reducer results",
+        });
+        break;
+
+      case EventTypes.REDUCER_RESIDUAL_CONTEXT_UPDATED:
+        updateAgent("reducer_residual", {
+          metadata: {
+            ...get().agents["reducer_residual"]?.metadata,
+            progress: 50,
+            contextSize: event.data?.context_size,
+          },
+        });
+        addAgentEvent("reducer_residual", {
+          timestamp,
+          eventType: event.event_type,
+          message: `Global context updated (${event.data?.context_size} chars)`,
+        });
+        break;
+
+      case EventTypes.REDUCER_RESIDUAL_PLAN_CREATING:
+        updateAgent("reducer_residual", {
+          metadata: {
+            ...get().agents["reducer_residual"]?.metadata,
+            progress: 75,
+            status: "Creating processing plan",
+          },
+        });
+        addAgentEvent("reducer_residual", {
+          timestamp,
+          eventType: event.event_type,
+          message: "Creating processing plan",
+        });
+        break;
+
+      case EventTypes.REDUCER_RESIDUAL_PLAN_CREATED:
+        updateAgent("reducer_residual", {
+          metadata: {
+            ...get().agents["reducer_residual"]?.metadata,
+            progress: 90,
+            planSize: event.data?.plan_size,
+          },
+        });
+        addAgentEvent("reducer_residual", {
+          timestamp,
+          eventType: event.event_type,
+          message: `Processing plan created (${event.data?.plan_size} chars)`,
+        });
+        break;
+
+      case EventTypes.REDUCER_RESIDUAL_COMPLETED:
+        setPipeline({ currentStep: "Master Merger" });
+        updateAgent("reducer_residual", {
+          status: AgentStatus.COMPLETED,
+          metadata: {
+            ...get().agents["reducer_residual"]?.metadata,
+            progress: 100,
+            elapsedTime: event.data?.elapsed_time,
+          },
+          endTime: Date.now(),
+        });
+        break;
+
+      case EventTypes.MASTER_MERGER_STARTED:
+        setPipeline({ currentStep: "Final Synthesis" });
+        // Create master merger agent node
+        addAgent({
+          id: "master_merger",
+          type: AgentType.MASTER_MERGER,
+          status: AgentStatus.PROCESSING,
+          label: "Master Merger",
+          parentId: "reducer_residual",
+          metadata: {
+            role: "Final Document Synthesis",
+            progress: 0,
+          },
+          events: [
+            {
+              timestamp,
+              eventType: event.event_type,
+              message: "Started final document synthesis",
+            },
+          ],
+          startTime: Date.now(),
+        });
+        break;
+
+      case EventTypes.MASTER_MERGER_SYNTHESIZING:
+        updateAgent("master_merger", {
+          metadata: {
+            ...get().agents["master_merger"]?.metadata,
+            progress: 30,
+            status: "Synthesizing final document",
+          },
+        });
+        addAgentEvent("master_merger", {
+          timestamp,
+          eventType: event.event_type,
+          message: "Synthesizing final document...",
+        });
+        break;
+
+      case EventTypes.MASTER_MERGER_EXECUTIVE_SUMMARY:
+        updateAgent("master_merger", {
+          metadata: {
+            ...get().agents["master_merger"]?.metadata,
+            progress: 50,
+            status: "Creating executive summary",
+          },
+        });
+        addAgentEvent("master_merger", {
+          timestamp,
+          eventType: event.event_type,
+          message: "Creating executive summary",
+        });
+        break;
+
+      case EventTypes.MASTER_MERGER_DETAILED_SYNTHESIS:
+        updateAgent("master_merger", {
+          metadata: {
+            ...get().agents["master_merger"]?.metadata,
+            progress: 70,
+            status: "Creating detailed synthesis",
+          },
+        });
+        addAgentEvent("master_merger", {
+          timestamp,
+          eventType: event.event_type,
+          message: "Creating detailed synthesis",
+        });
+        break;
+
+      case EventTypes.MASTER_MERGER_INSIGHTS:
+        updateAgent("master_merger", {
+          metadata: {
+            ...get().agents["master_merger"]?.metadata,
+            progress: 85,
+            status: "Generating insights and conclusions",
+          },
+        });
+        addAgentEvent("master_merger", {
+          timestamp,
+          eventType: event.event_type,
+          message: "Generating insights and conclusions",
+        });
+        break;
+
+      case EventTypes.MASTER_MERGER_COMPLETED:
+        setPipeline({ currentStep: "Generating PDF" });
+        updateAgent("master_merger", {
+          status: AgentStatus.COMPLETED,
+          metadata: {
+            ...get().agents["master_merger"]?.metadata,
+            progress: 100,
+            elapsedTime: event.data?.elapsed_time,
+            resultSize: event.data?.result_size,
+          },
+          endTime: Date.now(),
+        });
+        break;
+
+      case EventTypes.MASTER_MERGER_FAILED:
+        updateAgent("master_merger", {
+          status: AgentStatus.FAILED,
+          endTime: Date.now(),
+        });
+        break;
+
+      case EventTypes.PDF_GENERATION_STARTED:
+        setPipeline({ currentStep: "PDF Generation" });
+        // Create PDF generator node
+        addAgent({
+          id: "pdf_generator",
+          type: AgentType.PDF_GENERATOR,
+          status: AgentStatus.PROCESSING,
+          label: "PDF Generator",
+          parentId: "master_merger",
+          metadata: {
+            role: "Final Report Generator",
+            progress: 0,
+          },
+          events: [
+            {
+              timestamp,
+              eventType: event.event_type,
+              message: "Started generating PDF report",
+            },
+          ],
+          startTime: Date.now(),
+        });
+        break;
+
+      case EventTypes.PDF_GENERATION_COMPLETED:
+        setPipeline({ currentStep: "Complete" });
+        updateAgent("pdf_generator", {
+          status: AgentStatus.COMPLETED,
+          metadata: {
+            ...get().agents["pdf_generator"]?.metadata,
+            progress: 100,
+            pdfPath: event.data?.pdf_path,
+          },
+          endTime: Date.now(),
+        });
+        if (event.data?.pdf_path) {
+          setOutputPaths({ reportPath: event.data.pdf_path });
+        }
+        break;
+
+      case EventTypes.PDF_GENERATION_FAILED:
+        updateAgent("pdf_generator", {
+          status: AgentStatus.FAILED,
+          endTime: Date.now(),
+        });
         break;
     }
   },

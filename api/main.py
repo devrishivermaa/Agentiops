@@ -1101,12 +1101,23 @@ async def download_pipeline_report(pipeline_id: str):
     if not pipeline:
         raise HTTPException(status_code=404, detail=f"Pipeline {pipeline_id} not found")
     
+    # First, check if the pipeline has a pdf_path in its result
+    if pipeline.result and isinstance(pipeline.result, dict):
+        pdf_path = pipeline.result.get("pdf_path")
+        if pdf_path and Path(pdf_path).exists():
+            return FileResponse(
+                path=str(pdf_path),
+                media_type="application/pdf",
+                filename=f"final_summary_{pipeline_id}.pdf"
+            )
+    
     # Look for report in output directory
-    # Report filename pattern: {pipeline_id}_{filename}_report.pdf or analysis_report_{...}.pdf
     output_dir = Path(__file__).parent.parent / "output"
     
-    # Try different naming patterns
+    # Try different naming patterns - prioritize final_summary PDFs from unified pipeline
     possible_patterns = [
+        f"final_summary_{pipeline_id}_*.pdf",  # Unified pipeline output
+        f"final_summary_*{pipeline_id}*.pdf",
         f"*{pipeline_id}*report*.pdf",
         f"analysis_report_*{pipeline_id}*.pdf",
         f"*report*{pipeline_id}*.pdf",
@@ -1119,12 +1130,15 @@ async def download_pipeline_report(pipeline_id: str):
             report_path = matches[0]
             break
     
-    # Fallback: find most recent PDF
+    # Fallback: find most recent final_summary PDF, then any report PDF
     if not report_path:
-        pdf_files = list(output_dir.glob("*report*.pdf"))
-        if pdf_files:
-            # Sort by modification time, get most recent
-            report_path = max(pdf_files, key=lambda p: p.stat().st_mtime)
+        summary_pdfs = list(output_dir.glob("final_summary_*.pdf"))
+        if summary_pdfs:
+            report_path = max(summary_pdfs, key=lambda p: p.stat().st_mtime)
+        else:
+            pdf_files = list(output_dir.glob("*report*.pdf"))
+            if pdf_files:
+                report_path = max(pdf_files, key=lambda p: p.stat().st_mtime)
     
     if not report_path or not report_path.exists():
         raise HTTPException(status_code=404, detail="Report not found. Pipeline may still be processing.")
@@ -1132,8 +1146,57 @@ async def download_pipeline_report(pipeline_id: str):
     return FileResponse(
         path=str(report_path),
         media_type="application/pdf",
-        filename=f"analysis_report_{pipeline_id}.pdf"
+        filename=f"final_summary_{pipeline_id}.pdf"
     )
+
+
+@app.get("/api/pipeline/{pipeline_id}/final-summary")
+async def get_pipeline_final_summary(pipeline_id: str):
+    """
+    Get the final comprehensive summary from the Master Merger agent.
+    
+    This returns the complete synthesis including:
+    - Executive summary
+    - Detailed synthesis
+    - Metadata (entities, keywords, themes)
+    - Insights and conclusions
+    - PDF path if available
+    """
+    pipeline = pipeline_manager.get_pipeline(pipeline_id)
+    if not pipeline:
+        raise HTTPException(status_code=404, detail=f"Pipeline {pipeline_id} not found")
+    
+    if pipeline.status != PipelineStatus.COMPLETED:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Pipeline is '{pipeline.status.value}'. Final summary only available for completed pipelines."
+        )
+    
+    result = pipeline.result
+    if not result:
+        raise HTTPException(status_code=404, detail="No results found for this pipeline")
+    
+    # Extract final summary from unified pipeline result
+    if isinstance(result, dict):
+        final_summary = result.get("final_summary", {})
+        reducer_results = result.get("reducer_results", {})
+        
+        return {
+            "pipeline_id": pipeline_id,
+            "status": "completed",
+            "final_summary": final_summary,
+            "executive_summary": final_summary.get("executive_summary", ""),
+            "insights_and_conclusions": final_summary.get("insights_and_conclusions", {}),
+            "source_statistics": final_summary.get("source_statistics", {}),
+            "pdf_path": result.get("pdf_path"),
+            "reducer_phases": {
+                "reducer": reducer_results.get("phases", {}).get("reducer", {}).get("status"),
+                "residual": reducer_results.get("phases", {}).get("residual", {}).get("status"),
+                "merger": reducer_results.get("phases", {}).get("merger", {}).get("status"),
+            }
+        }
+    
+    return {"pipeline_id": pipeline_id, "result": result}
 
 
 @app.get("/api/pipeline/{pipeline_id}/download/json")
