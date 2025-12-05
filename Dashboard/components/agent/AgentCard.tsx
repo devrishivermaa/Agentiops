@@ -10,6 +10,8 @@ import {
   AlertTriangle,
   ChevronRight,
   Cpu,
+  Globe,
+  Layers,
 } from "lucide-react";
 import { spawnVariants } from "./animations";
 
@@ -21,6 +23,8 @@ interface AgentCardProps {
 export const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick }) => {
   const isMaster = agent.type === AgentType.MASTER;
   const isSubMaster = agent.type === AgentType.SUBMASTER;
+  const isResidual = agent.type === AgentType.RESIDUAL;
+  const isReducer = agent.type === AgentType.REDUCER;
 
   const statusConfig = {
     [AgentStatus.SPAWNED]: {
@@ -107,12 +111,16 @@ export const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick }) => {
       variants={spawnVariants}
       initial="hidden"
       animate="visible"
-      whileHover={{ scale: 1.02, y: -4 }}
+      whileHover={{
+        scale: 1.03,
+        y: -6,
+        transition: { type: "spring", stiffness: 400, damping: 25 },
+      }}
       whileTap={{ scale: 0.98 }}
       onClick={() => onClick(agent)}
       className={`
         relative flex flex-col items-center p-4 rounded-2xl border backdrop-blur-sm
-        transition-all duration-300 z-10 cursor-pointer group
+        transition-colors duration-300 z-10 cursor-pointer group
         ring-1 ${currentStatus.ring}
         ${currentStatus.border} ${currentStatus.bg} ${currentStatus.glow}
         ${
@@ -120,6 +128,10 @@ export const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick }) => {
             ? "w-60 min-h-[140px]"
             : isSubMaster
             ? "w-48 min-h-[130px]"
+            : isResidual
+            ? "w-44 min-h-[120px]"
+            : isReducer
+            ? "w-52 min-h-[130px]"
             : "w-32 min-h-[100px]"
         }
       `}
@@ -142,6 +154,10 @@ export const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick }) => {
             ? "bg-gradient-to-br from-purple-500/20 to-purple-600/10 text-purple-400"
             : isSubMaster
             ? "bg-gradient-to-br from-amber-500/20 to-amber-600/10 text-amber-400"
+            : isResidual
+            ? "bg-gradient-to-br from-cyan-500/20 to-cyan-600/10 text-cyan-400"
+            : isReducer
+            ? "bg-gradient-to-br from-emerald-500/20 to-emerald-600/10 text-emerald-400"
             : "bg-gradient-to-br from-zinc-700/50 to-zinc-800/50 text-zinc-400"
         }
       `}
@@ -150,6 +166,10 @@ export const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick }) => {
           <BrainCircuit size={26} />
         ) : isSubMaster ? (
           <BookOpen size={22} />
+        ) : isResidual ? (
+          <Globe size={22} />
+        ) : isReducer ? (
+          <Layers size={24} />
         ) : (
           <FileText size={18} />
         )}
@@ -208,8 +228,8 @@ export const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick }) => {
         </span>
       </div>
 
-      {/* Progress Bar for SubMaster/Master */}
-      {(isSubMaster || isMaster) &&
+      {/* Progress Bar for SubMaster/Master/Residual */}
+      {(isSubMaster || isMaster || isResidual) &&
         typeof agent.metadata?.progress === "number" && (
           <div className="w-full px-1 mt-auto pt-3">
             <div className="flex justify-between text-[10px] text-zinc-500 mb-1.5 font-medium">

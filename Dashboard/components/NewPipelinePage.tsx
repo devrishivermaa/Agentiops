@@ -6,22 +6,27 @@ import {
   Loader2,
   Sparkles,
   BrainCircuit,
-  Users,
-  Layers,
   Zap,
   ArrowRight,
   CheckCircle2,
-  Clock,
   FileSearch,
   GitBranch,
   Bot,
+  MessageSquare,
+  Settings,
+  AlertCircle,
 } from "lucide-react";
+import { useStore } from "../store";
+import { SessionStatus } from "../types";
+import { IntentModal } from "./IntentModal";
+import { MetadataEditor } from "./MetadataEditor";
 
 interface NewPipelinePageProps {
   onUpload: (file: File) => void;
   onSimulate: () => void;
   isProcessing: boolean;
   isConnected: boolean;
+  onPipelineStarted?: () => void;
 }
 
 export const NewPipelinePage: React.FC<NewPipelinePageProps> = ({
@@ -29,9 +34,19 @@ export const NewPipelinePage: React.FC<NewPipelinePageProps> = ({
   onSimulate,
   isProcessing,
   isConnected,
+  onPipelineStarted,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [showIntentModal, setShowIntentModal] = useState(false);
+  const [showMetadataEditor, setShowMetadataEditor] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isSubmittingIntent, setIsSubmittingIntent] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const { session, uploadFile, submitIntent, approveAndProcess, resetSession } =
+    useStore();
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -49,48 +64,129 @@ export const NewPipelinePage: React.FC<NewPipelinePageProps> = ({
     setIsDragging(false);
 
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setSelectedFile(e.dataTransfer.files[0]);
+      const file = e.dataTransfer.files[0];
+      if (file.name.toLowerCase().endsWith(".pdf")) {
+        setSelectedFile(file);
+        setError(null);
+      } else {
+        setError("Only PDF files are allowed");
+      }
     }
   }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setSelectedFile(e.target.files[0]);
+      const file = e.target.files[0];
+      if (file.name.toLowerCase().endsWith(".pdf")) {
+        setSelectedFile(file);
+        setError(null);
+      } else {
+        setError("Only PDF files are allowed");
+      }
     }
   };
 
-  const handleStartPipeline = () => {
-    if (selectedFile) {
-      onUpload(selectedFile);
+  const handleStartPipeline = async () => {
+    if (!selectedFile) return;
+
+    setIsUploading(true);
+    setError(null);
+
+    try {
+      await uploadFile(selectedFile);
+      setShowIntentModal(true);
+    } catch (err: any) {
+      setError(err.message || "Upload failed");
+    } finally {
+      setIsUploading(false);
     }
   };
 
-  const pipelineSteps = [
+  const handleIntentSubmit = async (intent: string, context?: string) => {
+    if (!session.sessionId) return;
+
+    setIsSubmittingIntent(true);
+
+    try {
+      await submitIntent(session.sessionId, intent, context);
+      setShowIntentModal(false);
+      setShowMetadataEditor(true);
+    } catch (err: any) {
+      setError(err.message || "Failed to submit intent");
+    } finally {
+      setIsSubmittingIntent(false);
+    }
+  };
+
+  const handleApprove = async (
+    approved: boolean,
+    modifiedMetadata?: Record<string, any>
+  ) => {
+    if (!session.sessionId) return;
+
+    setIsApproving(true);
+
+    try {
+      await approveAndProcess(session.sessionId, approved, modifiedMetadata);
+      setShowMetadataEditor(false);
+      // Trigger navigation to dashboard
+      if (onPipelineStarted) {
+        onPipelineStarted();
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to start processing");
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  const handleReset = () => {
+    setSelectedFile(null);
+    setError(null);
+    resetSession();
+  };
+
+  // Workflow steps indicator
+  const workflowSteps = [
     {
-      icon: FileSearch,
-      title: "Document Extraction",
-      description: "Intelligent PDF parsing and content extraction",
-      color: "blue",
+      id: 1,
+      label: "Upload",
+      icon: Upload,
+      status: selectedFile ? "completed" : "current",
     },
     {
-      icon: BrainCircuit,
-      title: "Master Planning",
-      description: "AI orchestrator analyzes and creates execution plan",
-      color: "purple",
+      id: 2,
+      label: "Intent",
+      icon: MessageSquare,
+      status:
+        session.status === SessionStatus.AWAITING_APPROVAL
+          ? "completed"
+          : session.status === SessionStatus.GENERATING_METADATA
+          ? "current"
+          : "pending",
     },
     {
-      icon: GitBranch,
-      title: "Task Distribution",
-      description: "Sub-masters delegate work to specialized workers",
-      color: "amber",
+      id: 3,
+      label: "Review",
+      icon: Settings,
+      status:
+        session.status === SessionStatus.PROCESSING
+          ? "completed"
+          : session.status === SessionStatus.AWAITING_APPROVAL
+          ? "current"
+          : "pending",
     },
     {
-      icon: Bot,
-      title: "Parallel Processing",
-      description: "Worker agents process pages concurrently",
-      color: "green",
+      id: 4,
+      label: "Process",
+      icon: Zap,
+      status:
+        session.status === SessionStatus.PROCESSING ? "current" : "pending",
     },
   ];
+
+  const isAnyLoading =
+    isUploading || isSubmittingIntent || isApproving || isProcessing;
 
   return (
     <div className="relative w-full h-full overflow-auto bg-zinc-950">
@@ -106,7 +202,7 @@ export const NewPipelinePage: React.FC<NewPipelinePageProps> = ({
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="text-center mb-12"
+          className="text-center mb-8"
         >
           <h1 className="text-4xl md:text-5xl font-bold text-zinc-100 mb-4 tracking-tight">
             Initialize New Pipeline
@@ -116,6 +212,58 @@ export const NewPipelinePage: React.FC<NewPipelinePageProps> = ({
             comprehensive analysis in real-time.
           </p>
         </motion.div>
+
+        {/* Workflow Steps Indicator */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.05 }}
+          className="flex items-center justify-center gap-2 mb-8"
+        >
+          {workflowSteps.map((step, index) => (
+            <React.Fragment key={step.id}>
+              <div
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
+                  step.status === "completed"
+                    ? "bg-green-500/10 text-green-400 border border-green-500/30"
+                    : step.status === "current"
+                    ? "bg-primary/10 text-primary border border-primary/30"
+                    : "bg-zinc-800/50 text-zinc-500 border border-zinc-700/50"
+                }`}
+              >
+                <step.icon size={14} />
+                <span className="hidden sm:inline">{step.label}</span>
+              </div>
+              {index < workflowSteps.length - 1 && (
+                <div
+                  className={`w-8 h-0.5 ${
+                    step.status === "completed"
+                      ? "bg-green-500/50"
+                      : "bg-zinc-700"
+                  }`}
+                />
+              )}
+            </React.Fragment>
+          ))}
+        </motion.div>
+
+        {/* Error Display */}
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 flex items-center gap-3 px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400"
+          >
+            <AlertCircle size={18} />
+            <span className="text-sm">{error}</span>
+            <button
+              onClick={() => setError(null)}
+              className="ml-auto text-red-400 hover:text-red-300"
+            >
+              ×
+            </button>
+          </motion.div>
+        )}
 
         {/* Upload Section */}
         <motion.div
@@ -134,7 +282,7 @@ export const NewPipelinePage: React.FC<NewPipelinePageProps> = ({
                   ? "border-green-500/50 bg-green-500/5"
                   : "border-zinc-700/50 hover:border-zinc-600 bg-zinc-900/30"
               }
-              ${isProcessing ? "opacity-50 pointer-events-none" : ""}
+              ${isAnyLoading ? "opacity-50 pointer-events-none" : ""}
             `}
             onDragEnter={handleDrag}
             onDragLeave={handleDrag}
@@ -152,7 +300,7 @@ export const NewPipelinePage: React.FC<NewPipelinePageProps> = ({
               className="hidden"
               accept=".pdf"
               onChange={handleChange}
-              disabled={isProcessing}
+              disabled={isAnyLoading}
             />
 
             <label
@@ -160,9 +308,9 @@ export const NewPipelinePage: React.FC<NewPipelinePageProps> = ({
               className="flex flex-col items-center cursor-pointer w-full p-12"
             >
               <AnimatePresence mode="wait">
-                {isProcessing ? (
+                {isUploading ? (
                   <motion.div
-                    key="processing"
+                    key="uploading"
                     initial={{ opacity: 0, scale: 0.8 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.8 }}
@@ -173,10 +321,10 @@ export const NewPipelinePage: React.FC<NewPipelinePageProps> = ({
                       <Loader2 className="w-16 h-16 text-primary animate-spin relative" />
                     </div>
                     <h3 className="text-xl font-semibold text-zinc-100 mt-6 mb-2">
-                      Initializing Pipeline...
+                      Uploading...
                     </h3>
                     <p className="text-zinc-500 text-sm">
-                      Preparing document for analysis
+                      Preparing your document
                     </p>
                   </motion.div>
                 ) : selectedFile ? (
@@ -237,27 +385,48 @@ export const NewPipelinePage: React.FC<NewPipelinePageProps> = ({
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleStartPipeline}
-              disabled={!selectedFile || isProcessing}
+              disabled={!selectedFile || isAnyLoading}
               className={`
                 flex items-center gap-3 px-8 py-3 rounded-xl font-semibold text-base transition-all
                 ${
-                  selectedFile && !isProcessing
+                  selectedFile && !isAnyLoading
                     ? "bg-primary text-white shadow-lg shadow-primary/25 hover:shadow-primary/40"
                     : "bg-zinc-800 text-zinc-500 cursor-not-allowed"
                 }
               `}
             >
-              <Zap size={18} />
-              Start Pipeline
-              <ArrowRight size={18} />
+              {isUploading ? (
+                <>
+                  <Loader2 size={18} className="animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <Zap size={18} />
+                  Start Pipeline
+                  <ArrowRight size={18} />
+                </>
+              )}
             </motion.button>
 
-            {!isConnected && (
+            {selectedFile && (
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={handleReset}
+                disabled={isAnyLoading}
+                className="flex items-center gap-2 px-4 py-3 rounded-xl font-medium text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-all"
+              >
+                Reset
+              </motion.button>
+            )}
+
+            {!isConnected && !selectedFile && (
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={onSimulate}
-                disabled={isProcessing}
+                disabled={isAnyLoading}
                 className="flex items-center gap-2 px-6 py-3 rounded-xl font-medium text-sm bg-zinc-800/80 text-zinc-300 border border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600 transition-all"
               >
                 <Sparkles size={16} />
@@ -267,6 +436,25 @@ export const NewPipelinePage: React.FC<NewPipelinePageProps> = ({
           </div>
         </motion.div>
       </div>
+
+      {/* Intent Modal */}
+      <IntentModal
+        isOpen={showIntentModal}
+        onClose={() => setShowIntentModal(false)}
+        onSubmit={handleIntentSubmit}
+        fileName={selectedFile?.name || session.fileName || ""}
+        isLoading={isSubmittingIntent}
+      />
+
+      {/* Metadata Editor */}
+      <MetadataEditor
+        isOpen={showMetadataEditor}
+        onClose={() => setShowMetadataEditor(false)}
+        onApprove={handleApprove}
+        metadata={session.metadata}
+        fileName={selectedFile?.name || session.fileName || ""}
+        isLoading={isApproving}
+      />
     </div>
   );
 };

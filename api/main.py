@@ -16,7 +16,7 @@ import uuid
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 
 from .events import event_bus, EventType
 from .pipeline_manager import pipeline_manager
@@ -33,6 +33,15 @@ from .models import (
     RateLimitStats,
     SystemStats,
     WSMessage,
+    SessionCreate,
+    IntentSubmit,
+    MetadataResponse,
+    MetadataApproval,
+    SessionStatus,
+    ChatRequest,
+    ChatResponse,
+    ChatMessage,
+    ChatHistory,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,6 +50,10 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path(__file__).parent.parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
+# Output directory
+OUTPUT_DIR = Path(__file__).parent.parent / "output"
+OUTPUT_DIR.mkdir(exist_ok=True)
+
 # Track if Ray is available
 RAY_AVAILABLE = False
 try:
@@ -48,6 +61,78 @@ try:
     RAY_AVAILABLE = True
 except ImportError:
     logger.warning("Ray not installed - engine features will be limited")
+
+
+# ==================== Session Manager ====================
+
+class SessionManager:
+    """Manages processing sessions for the step-by-step workflow."""
+    
+    def __init__(self):
+        self._sessions: Dict[str, Dict[str, Any]] = {}
+        self._chat_histories: Dict[str, List[Dict[str, str]]] = {}
+    
+    def create_session(self, file_path: str, file_name: str) -> str:
+        """Create a new processing session."""
+        session_id = f"session-{uuid.uuid4().hex[:8]}"
+        self._sessions[session_id] = {
+            "session_id": session_id,
+            "file_path": file_path,
+            "file_name": file_name,
+            "status": "awaiting_intent",
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+            "high_level_intent": None,
+            "document_context": None,
+            "metadata_path": None,
+            "metadata": None,
+            "pipeline_id": None,
+            "error": None,
+        }
+        self._chat_histories[session_id] = []
+        return session_id
+    
+    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get session by ID."""
+        return self._sessions.get(session_id)
+    
+    def update_session(self, session_id: str, **kwargs) -> bool:
+        """Update session fields."""
+        if session_id not in self._sessions:
+            return False
+        self._sessions[session_id].update(kwargs)
+        self._sessions[session_id]["updated_at"] = datetime.utcnow()
+        return True
+    
+    def list_sessions(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List all sessions, optionally filtered by status."""
+        sessions = list(self._sessions.values())
+        if status:
+            sessions = [s for s in sessions if s["status"] == status]
+        return sorted(sessions, key=lambda x: x["created_at"], reverse=True)
+    
+    def add_chat_message(self, session_id: str, role: str, content: str):
+        """Add a message to chat history."""
+        if session_id not in self._chat_histories:
+            self._chat_histories[session_id] = []
+        self._chat_histories[session_id].append({
+            "role": role,
+            "content": content,
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    
+    def get_chat_history(self, session_id: str) -> List[Dict[str, str]]:
+        """Get chat history for a session."""
+        return self._chat_histories.get(session_id, [])
+    
+    def clear_chat_history(self, session_id: str):
+        """Clear chat history for a session."""
+        if session_id in self._chat_histories:
+            self._chat_histories[session_id] = []
+
+
+# Global session manager instance
+session_manager = SessionManager()
 
 
 def initialize_ray():
@@ -272,13 +357,23 @@ async def upload_and_process(
     file: UploadFile = File(..., description="PDF file to process"),
     auto_approve: bool = Form(True, description="Auto-approve SubMaster plan"),
     user_notes: Optional[str] = Form(None, description="Optional notes for processing"),
+    high_level_intent: Optional[str] = Form(None, description="High-level intent (e.g., 'Summarize for presentation')"),
+    document_context: Optional[str] = Form(None, description="Additional context about the document"),
 ):
     """
     Upload a PDF and immediately start processing.
     
-    This is a convenience endpoint that combines:
-    1. POST /api/upload - Upload the file
-    2. POST /api/pipeline/start - Start processing
+    This is the main endpoint for the API workflow:
+    1. Upload the PDF file
+    2. Start the pipeline with provided intent and context
+    3. Returns pipeline_id for tracking progress via WebSocket
+    
+    Parameters:
+    - file: PDF file to process
+    - auto_approve: Auto-approve the SubMaster plan (default: True)
+    - user_notes: Optional notes for processing
+    - high_level_intent: What you want to do with the document (e.g., "Summarize for presentation")
+    - document_context: Additional context about the document content
     
     Returns pipeline status with the pipeline_id for tracking.
     """
@@ -299,17 +394,20 @@ async def upload_and_process(
         file_size = file_path.stat().st_size / (1024 * 1024)
         logger.info(f"✅ File uploaded: {safe_filename} ({file_size:.2f} MB)")
         
-        # Start pipeline
+        # Start pipeline with intent and context
         request = PipelineRunCreate(
             file_path=str(file_path),
             auto_approve=auto_approve,
             user_notes=user_notes,
+            high_level_intent=high_level_intent or "Analyze and summarize the document",
+            document_context=document_context,
         )
         
         response = await pipeline_manager.start_pipeline(request)
         
         return {
             "status": "processing",
+            "message": "Pipeline started successfully. Use the pipeline_id to track progress.",
             "file": {
                 "filename": safe_filename,
                 "original_filename": file.filename,
@@ -317,6 +415,10 @@ async def upload_and_process(
                 "size_mb": round(file_size, 2),
             },
             "pipeline": response.model_dump(),
+            "tracking": {
+                "status_url": f"/api/pipeline/{response.pipeline_id}",
+                "websocket_url": f"/ws/pipeline/{response.pipeline_id}",
+            }
         }
         
     except Exception as e:
@@ -327,6 +429,458 @@ async def upload_and_process(
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
 
+# ==================== Session Workflow Endpoints ====================
+# Step-by-step workflow: Upload -> Intent -> Metadata Approval -> Process -> Chat
+
+@app.post("/api/session/upload", response_model=SessionCreate)
+async def session_upload(
+    file: UploadFile = File(..., description="PDF file to upload"),
+):
+    """
+    STEP 1: Upload a PDF and create a processing session.
+    
+    This starts the workflow. After upload, the client should:
+    1. Call POST /api/session/{session_id}/intent to submit user intent
+    2. Receive metadata and approve it
+    3. Start processing
+    4. Chat with the processed document
+    
+    Returns a session_id for tracking the workflow.
+    """
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+    
+    # Generate unique filename
+    file_id = uuid.uuid4().hex[:8]
+    safe_filename = f"{file_id}_{file.filename.replace(' ', '_')}"
+    file_path = DATA_DIR / safe_filename
+    
+    try:
+        # Save uploaded file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        file_size = file_path.stat().st_size / (1024 * 1024)
+        logger.info(f"✅ Session file uploaded: {safe_filename} ({file_size:.2f} MB)")
+        
+        # Create session
+        session_id = session_manager.create_session(str(file_path), safe_filename)
+        
+        return SessionCreate(
+            session_id=session_id,
+            file_path=str(file_path),
+            file_name=safe_filename,
+            status="awaiting_intent"
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Session upload failed: {e}")
+        if file_path.exists():
+            file_path.unlink()
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
+@app.post("/api/session/{session_id}/intent", response_model=MetadataResponse)
+async def session_submit_intent(session_id: str, intent: IntentSubmit):
+    """
+    STEP 2: Submit user intent and generate metadata.
+    
+    After uploading, the user provides:
+    - high_level_intent: What they want to do (e.g., "Summarize for presentation")
+    - document_context: Optional additional context about the document
+    
+    This triggers the Mapper to extract metadata from the PDF.
+    Returns the metadata for user approval.
+    """
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    
+    if session["status"] != "awaiting_intent":
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Session is in '{session['status']}' state, expected 'awaiting_intent'"
+        )
+    
+    try:
+        # Update session with intent
+        session_manager.update_session(
+            session_id,
+            high_level_intent=intent.high_level_intent,
+            document_context=intent.document_context,
+            status="generating_metadata"
+        )
+        
+        # Run Mapper to extract metadata
+        from workflows.mapper import Mapper
+        
+        user_config = {
+            "document_type": "research_paper",
+            "processing_requirements": [
+                "summary_generation",
+                "entity_extraction", 
+                "keyword_indexing"
+            ],
+            "user_notes": intent.high_level_intent,
+            "high_level_intent": intent.high_level_intent,
+            "document_context": intent.document_context or "",
+            "complexity_level": "high",
+            "preferred_model": "mistral-small-latest",
+            "max_parallel_submasters": 3,
+            "num_workers_per_submaster": 4,
+            "feedback_required": True
+        }
+        
+        mapper = Mapper(output_dir=str(OUTPUT_DIR))
+        mapper_result = mapper.execute(session["file_path"], user_config)
+        
+        if mapper_result.get("status") != "success":
+            raise RuntimeError(f"Mapper failed: {mapper_result.get('error', 'Unknown error')}")
+        
+        # Load generated metadata
+        metadata_path = mapper_result["metadata_path"]
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+        
+        # Enrich metadata with user intent
+        metadata["high_level_intent"] = intent.high_level_intent
+        metadata["user_document_context"] = intent.document_context
+        
+        # Save enriched metadata
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+        
+        # Update session
+        session_manager.update_session(
+            session_id,
+            metadata_path=metadata_path,
+            metadata=metadata,
+            status="awaiting_approval"
+        )
+        
+        logger.info(f"✅ Metadata generated for session {session_id}")
+        
+        return MetadataResponse(
+            session_id=session_id,
+            metadata_path=metadata_path,
+            metadata=metadata,
+            status="awaiting_approval"
+        )
+        
+    except Exception as e:
+        logger.exception(f"Failed to generate metadata for session {session_id}")
+        session_manager.update_session(session_id, status="failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Metadata generation failed: {str(e)}")
+
+
+@app.get("/api/session/{session_id}/metadata")
+async def session_get_metadata(session_id: str):
+    """
+    Get the current metadata for a session.
+    
+    Use this to view or edit the metadata before approval.
+    """
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    
+    if not session.get("metadata"):
+        raise HTTPException(status_code=400, detail="Metadata not yet generated. Submit intent first.")
+    
+    return {
+        "session_id": session_id,
+        "metadata_path": session["metadata_path"],
+        "metadata": session["metadata"],
+        "status": session["status"]
+    }
+
+
+@app.put("/api/session/{session_id}/metadata")
+async def session_update_metadata(session_id: str, metadata: Dict[str, Any]):
+    """
+    Update/edit metadata before approval.
+    
+    Allows the user to modify the generated metadata before processing.
+    """
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    
+    if session["status"] not in ["awaiting_approval", "awaiting_intent"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot edit metadata in '{session['status']}' state"
+        )
+    
+    try:
+        # Save updated metadata
+        metadata_path = session.get("metadata_path")
+        if metadata_path:
+            with open(metadata_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False)
+        
+        session_manager.update_session(session_id, metadata=metadata)
+        
+        return {
+            "session_id": session_id,
+            "status": "metadata_updated",
+            "metadata": metadata
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update metadata: {str(e)}")
+
+
+@app.post("/api/session/{session_id}/approve")
+async def session_approve_and_process(session_id: str, approval: MetadataApproval):
+    """
+    STEP 3: Approve metadata and start processing.
+    
+    If approved=True, starts the processing pipeline with current metadata.
+    If approved=False with modified_metadata, updates metadata first then processes.
+    
+    Returns the pipeline_id for tracking processing progress.
+    """
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    
+    if session["status"] != "awaiting_approval":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Session is in '{session['status']}' state, expected 'awaiting_approval'"
+        )
+    
+    try:
+        metadata_path = session["metadata_path"]
+        
+        # Update metadata if modified
+        if not approval.approved and approval.modified_metadata:
+            with open(metadata_path, "w", encoding="utf-8") as f:
+                json.dump(approval.modified_metadata, f, indent=2, ensure_ascii=False)
+            session_manager.update_session(session_id, metadata=approval.modified_metadata)
+        elif not approval.approved:
+            raise HTTPException(
+                status_code=400,
+                detail="Rejection requires modified_metadata to be provided"
+            )
+        
+        # Start pipeline from metadata
+        session_manager.update_session(session_id, status="processing")
+        
+        request = PipelineRunFromMetadata(
+            metadata_path=metadata_path,
+            high_level_intent=session.get("high_level_intent"),
+            document_context=session.get("document_context"),
+            auto_approve=True
+        )
+        
+        response = await pipeline_manager.start_pipeline_from_metadata(request)
+        
+        session_manager.update_session(
+            session_id,
+            pipeline_id=response.pipeline_id,
+            status="processing"
+        )
+        
+        logger.info(f"✅ Processing started for session {session_id}, pipeline: {response.pipeline_id}")
+        
+        return {
+            "session_id": session_id,
+            "status": "processing",
+            "pipeline_id": response.pipeline_id,
+            "pipeline": response.model_dump(),
+            "tracking": {
+                "status_url": f"/api/pipeline/{response.pipeline_id}",
+                "websocket_url": f"/ws/pipeline/{response.pipeline_id}"
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Failed to start processing for session {session_id}")
+        session_manager.update_session(session_id, status="failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+
+@app.get("/api/session/{session_id}", response_model=SessionStatus)
+async def session_get_status(session_id: str):
+    """
+    Get the current status of a session.
+    
+    Statuses:
+    - awaiting_intent: Upload complete, waiting for user intent
+    - generating_metadata: Mapper is extracting metadata
+    - awaiting_approval: Metadata ready for user approval
+    - processing: Pipeline is running
+    - completed: Processing complete, ready for chat
+    - failed: An error occurred
+    """
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    
+    # If processing, check pipeline status
+    if session["status"] == "processing" and session.get("pipeline_id"):
+        pipeline = pipeline_manager.get_pipeline(session["pipeline_id"])
+        if pipeline:
+            if pipeline.status == PipelineStatus.COMPLETED:
+                session_manager.update_session(session_id, status="completed")
+                session["status"] = "completed"
+            elif pipeline.status == PipelineStatus.FAILED:
+                session_manager.update_session(session_id, status="failed", error="Pipeline failed")
+                session["status"] = "failed"
+    
+    return SessionStatus(
+        session_id=session["session_id"],
+        status=session["status"],
+        file_name=session["file_name"],
+        file_path=session["file_path"],
+        pipeline_id=session.get("pipeline_id"),
+        metadata_path=session.get("metadata_path"),
+        created_at=session["created_at"],
+        updated_at=session.get("updated_at"),
+        error=session.get("error")
+    )
+
+
+@app.get("/api/sessions")
+async def list_sessions(status: Optional[str] = Query(None)):
+    """List all sessions, optionally filtered by status."""
+    sessions = session_manager.list_sessions(status)
+    return {
+        "sessions": sessions,
+        "total": len(sessions)
+    }
+
+
+# ==================== Chat/RAG Endpoints ====================
+
+@app.post("/api/session/{session_id}/chat", response_model=ChatResponse)
+async def session_chat(session_id: str, request: ChatRequest):
+    """
+    STEP 4: Chat with the processed document.
+    
+    After processing is complete, use this endpoint to ask questions
+    about the document content. Uses RAG (Retrieval Augmented Generation)
+    to find relevant context and generate answers.
+    """
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    
+    if session["status"] != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Chat not available. Session status: '{session['status']}'. Processing must be completed first."
+        )
+    
+    try:
+        # Import and use RAG system
+        from RAG.query_system import RAGSystem
+        
+        rag = RAGSystem()
+        result = rag.query(request.question, top_k=request.top_k, verbose=False)
+        
+        # Store in chat history
+        session_manager.add_chat_message(session_id, "user", request.question)
+        session_manager.add_chat_message(session_id, "assistant", result["answer"])
+        
+        return ChatResponse(
+            question=result["query"],
+            answer=result["answer"],
+            sources=[{
+                "text": s["text"][:200] + "..." if len(s["text"]) > 200 else s["text"],
+                "score": s["score"],
+                "doc_id": s["metadata"].get("doc_id", "N/A")
+            } for s in result.get("sources", [])],
+            context_used=len(result.get("context", ""))
+        )
+        
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="RAG system not available. Ensure vector store is built."
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Vector store not found. Run the reducer pipeline first to build it. Error: {e}"
+        )
+    except Exception as e:
+        logger.exception(f"Chat failed for session {session_id}")
+        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+
+@app.get("/api/session/{session_id}/chat/history", response_model=ChatHistory)
+async def session_chat_history(session_id: str):
+    """Get the chat history for a session."""
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    
+    history = session_manager.get_chat_history(session_id)
+    
+    return ChatHistory(
+        session_id=session_id,
+        messages=[ChatMessage(role=m["role"], content=m["content"]) for m in history]
+    )
+
+
+@app.delete("/api/session/{session_id}/chat/history")
+async def session_clear_chat_history(session_id: str):
+    """Clear the chat history for a session."""
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    
+    session_manager.clear_chat_history(session_id)
+    return {"status": "cleared", "session_id": session_id}
+
+
+# ==================== Standalone Chat Endpoint ====================
+
+@app.post("/api/chat", response_model=ChatResponse)
+async def standalone_chat(request: ChatRequest):
+    """
+    Chat with processed documents without a session.
+    
+    Uses the global vector store to answer questions.
+    This works if documents have been processed via the unified pipeline.
+    """
+    try:
+        from RAG.query_system import RAGSystem
+        
+        rag = RAGSystem()
+        result = rag.query(request.question, top_k=request.top_k, verbose=False)
+        
+        return ChatResponse(
+            question=result["query"],
+            answer=result["answer"],
+            sources=[{
+                "text": s["text"][:200] + "..." if len(s["text"]) > 200 else s["text"],
+                "score": s["score"],
+                "doc_id": s["metadata"].get("doc_id", "N/A")
+            } for s in result.get("sources", [])],
+            context_used=len(result.get("context", ""))
+        )
+        
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="RAG system not available. Ensure dependencies are installed."
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Vector store not found. Process documents first. Error: {e}"
+        )
+    except Exception as e:
+        logger.exception("Standalone chat failed")
+        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+
 # ==================== Pipeline Endpoints ====================
 
 @app.post("/api/pipeline/start", response_model=PipelineRunResponse)
@@ -334,12 +888,23 @@ async def start_pipeline(request: PipelineRunCreate):
     """
     Start a new pipeline run from a PDF file.
     
+    Request body:
+    - file_path: Path to the PDF file to process
+    - high_level_intent: What to do with the document (e.g., "Summarize for presentation")
+    - document_context: Additional context about the document
+    - auto_approve: Auto-approve SubMaster plan (default: True)
+    - user_notes: Optional notes for processing
+    - max_parallel_submasters: Max parallel SubMasters (1-10)
+    - num_workers_per_submaster: Workers per SubMaster (1-10)
+    
     The pipeline will:
     1. Extract metadata and sections from the PDF (Mapper)
-    2. Generate SubMaster execution plan (MasterAgent)
+    2. Generate SubMaster execution plan (MasterAgent) - uses high_level_intent
     3. Wait for approval (if auto_approve=False)
     4. Process document with SubMasters and Workers
     5. Generate final report
+    
+    Returns pipeline_id for tracking progress.
     """
     try:
         response = await pipeline_manager.start_pipeline(request)
@@ -355,6 +920,12 @@ async def start_pipeline_from_metadata(request: PipelineRunFromMetadata):
     Start a pipeline from an existing metadata JSON file.
     
     This skips the Mapper step and uses pre-generated metadata.
+    
+    Request body:
+    - metadata_path: Path to metadata JSON file
+    - high_level_intent: What to do with the document
+    - document_context: Additional document context
+    - auto_approve: Auto-approve SubMaster plan (default: True)
     """
     try:
         response = await pipeline_manager.start_pipeline_from_metadata(request)
@@ -373,6 +944,52 @@ async def list_pipelines(
     """List all pipeline runs, optionally filtered by status"""
     pipelines = pipeline_manager.list_pipelines(status)
     return PipelineListResponse(pipelines=pipelines, total=len(pipelines))
+
+
+# ==================== Internal Event Endpoint ====================
+
+@app.post("/api/internal/emit")
+async def emit_event_internal(event_data: Dict[str, Any]):
+    """
+    Internal endpoint for agents running in Ray actors to emit events.
+    This is needed because Ray actors run in separate processes and can't
+    share the EventBus singleton with the main FastAPI process.
+    """
+    try:
+        event_type_str = event_data.get("event_type")
+        pipeline_id = event_data.get("pipeline_id")
+        data = event_data.get("data", {})
+        agent_id = event_data.get("agent_id")
+        agent_type = event_data.get("agent_type")
+        
+        if not event_type_str or not pipeline_id:
+            raise HTTPException(status_code=400, detail="event_type and pipeline_id required")
+        
+        # Get event type enum
+        event_type = getattr(EventType, event_type_str, None)
+        if not event_type:
+            # Try with the full string value
+            for et in EventType:
+                if et.value == event_type_str:
+                    event_type = et
+                    break
+        
+        if not event_type:
+            logger.warning(f"Unknown event type: {event_type_str}")
+            return {"status": "skipped", "reason": f"Unknown event type: {event_type_str}"}
+        
+        event_bus.emit_simple(
+            event_type,
+            pipeline_id,
+            data,
+            agent_id=agent_id,
+            agent_type=agent_type,
+        )
+        
+        return {"status": "ok", "event_type": event_type_str}
+    except Exception as e:
+        logger.error(f"Failed to emit event: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/pipeline/{pipeline_id}", response_model=PipelineRunResponse)
@@ -473,6 +1090,91 @@ async def get_pipeline_agents(pipeline_id: str):
     # This is a placeholder - will be populated when agents emit events
     
     return AgentListResponse(pipeline_id=pipeline_id, agents=hierarchy)
+
+
+# ==================== Download Endpoints ====================
+
+@app.get("/api/pipeline/{pipeline_id}/download/report")
+async def download_pipeline_report(pipeline_id: str):
+    """Download the PDF report for a completed pipeline"""
+    pipeline = pipeline_manager.get_pipeline(pipeline_id)
+    if not pipeline:
+        raise HTTPException(status_code=404, detail=f"Pipeline {pipeline_id} not found")
+    
+    # Look for report in output directory
+    # Report filename pattern: {pipeline_id}_{filename}_report.pdf or analysis_report_{...}.pdf
+    output_dir = Path(__file__).parent.parent / "output"
+    
+    # Try different naming patterns
+    possible_patterns = [
+        f"*{pipeline_id}*report*.pdf",
+        f"analysis_report_*{pipeline_id}*.pdf",
+        f"*report*{pipeline_id}*.pdf",
+    ]
+    
+    report_path = None
+    for pattern in possible_patterns:
+        matches = list(output_dir.glob(pattern))
+        if matches:
+            report_path = matches[0]
+            break
+    
+    # Fallback: find most recent PDF
+    if not report_path:
+        pdf_files = list(output_dir.glob("*report*.pdf"))
+        if pdf_files:
+            # Sort by modification time, get most recent
+            report_path = max(pdf_files, key=lambda p: p.stat().st_mtime)
+    
+    if not report_path or not report_path.exists():
+        raise HTTPException(status_code=404, detail="Report not found. Pipeline may still be processing.")
+    
+    return FileResponse(
+        path=str(report_path),
+        media_type="application/pdf",
+        filename=f"analysis_report_{pipeline_id}.pdf"
+    )
+
+
+@app.get("/api/pipeline/{pipeline_id}/download/json")
+async def download_pipeline_json(pipeline_id: str):
+    """Download the JSON results for a completed pipeline"""
+    pipeline = pipeline_manager.get_pipeline(pipeline_id)
+    if not pipeline:
+        raise HTTPException(status_code=404, detail=f"Pipeline {pipeline_id} not found")
+    
+    # Look for results in output directory
+    output_dir = Path(__file__).parent.parent / "output"
+    
+    # Try different naming patterns
+    possible_patterns = [
+        f"{pipeline_id}_*_results_*.json",
+        f"*{pipeline_id}*results*.json",
+        f"*results*{pipeline_id}*.json",
+    ]
+    
+    json_path = None
+    for pattern in possible_patterns:
+        matches = list(output_dir.glob(pattern))
+        if matches:
+            json_path = matches[0]
+            break
+    
+    # Fallback: find most recent results JSON
+    if not json_path:
+        json_files = list(output_dir.glob("*_results_*.json"))
+        if json_files:
+            # Sort by modification time, get most recent
+            json_path = max(json_files, key=lambda p: p.stat().st_mtime)
+    
+    if not json_path or not json_path.exists():
+        raise HTTPException(status_code=404, detail="Results not found. Pipeline may still be processing.")
+    
+    return FileResponse(
+        path=str(json_path),
+        media_type="application/json",
+        filename=f"analysis_results_{pipeline_id}.json"
+    )
 
 
 # ==================== Stats Endpoints ====================

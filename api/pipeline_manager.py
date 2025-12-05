@@ -141,7 +141,7 @@ class PipelineManager:
         
         thread = threading.Thread(
             target=self._run_pipeline_from_metadata_thread,
-            args=(pipeline_id, request.metadata_path, metadata),
+            args=(pipeline_id, request.metadata_path, metadata, request),
             daemon=True,
         )
         self._executor_threads[pipeline_id] = thread
@@ -158,7 +158,7 @@ class PipelineManager:
             # Import here to avoid circular imports
             from workflows.mapper import Mapper
             from agents.master_agent import MasterAgent
-            from orchestrator import run_submasters
+            from orchestrator import spawn_submasters_and_run
             from utils.report_generator import generate_analysis_report
             
             # Default user config for pipeline
@@ -170,6 +170,8 @@ class PipelineManager:
                     "keyword_indexing"
                 ],
                 "user_notes": request.user_notes or "",
+                "high_level_intent": getattr(request, 'high_level_intent', None) or "Analyze and summarize",
+                "document_context": getattr(request, 'document_context', None) or "",
                 "complexity_level": "high",
                 "preferred_model": "mistral-small-latest",
                 "max_parallel_submasters": request.max_parallel_submasters or 3,
@@ -194,15 +196,22 @@ class PipelineManager:
             self._pipelines[pipeline_id]["metadata"] = metadata
             self._update_progress(pipeline_id, 20)
             
-            # Step 2: MasterAgent generates plan
+            # Step 2: MasterAgent generates plan using API-friendly method
             self._update_status(pipeline_id, PipelineStatus.RUNNING, step="master_planning")
             emit_pipeline_step(pipeline_id, "master_planning", "started")
             
             master = MasterAgent()
-            # Use user_notes as the goal for plan generation
-            goal = metadata.get("user_notes", "Process the document according to standard workflow.")
+            
+            # Use execute_api with intent and context from request
+            high_level_intent = getattr(request, 'high_level_intent', None) or metadata.get("user_notes", "Analyze and summarize the document")
+            document_context = getattr(request, 'document_context', None) or ""
+            
             try:
-                plan = master.ask_llm_for_plan(goal, metadata)
+                plan = master.execute_api(
+                    metadata_path=metadata_path,
+                    high_level_intent=high_level_intent,
+                    user_document_context=document_context
+                )
             except Exception as e:
                 raise RuntimeError(f"MasterAgent failed to generate plan: {e}")
             
@@ -237,7 +246,14 @@ class PipelineManager:
             self._update_status(pipeline_id, PipelineStatus.RUNNING, step="orchestration")
             emit_pipeline_step(pipeline_id, "orchestration", "started")
             
-            results = run_submasters(plan, metadata, pipeline_id=pipeline_id)
+            # Initialize ResidualAgent for context coordination
+            import ray
+            from agents.residual_agent import ResidualAgentActor
+            if not ray.is_initialized():
+                ray.init(ignore_reinit_error=True, num_cpus=4)
+            residual = ResidualAgentActor.remote()
+            
+            results = spawn_submasters_and_run(plan, metadata, residual_handle=residual)
             
             emit_pipeline_step(pipeline_id, "orchestration", "completed", {"num_results": len(results)})
             self._update_progress(pipeline_id, 80)
@@ -265,7 +281,7 @@ class PipelineManager:
             emit_pipeline_failed(pipeline_id, str(e), self._pipelines[pipeline_id].get("current_step"))
     
     def _run_pipeline_from_metadata_thread(
-        self, pipeline_id: str, metadata_path: str, metadata: Dict
+        self, pipeline_id: str, metadata_path: str, metadata: Dict, request = None
     ):
         """Run pipeline from pre-generated metadata"""
         try:
@@ -273,15 +289,29 @@ class PipelineManager:
             emit_pipeline_started(pipeline_id, metadata.get("file_path", metadata_path), metadata)
             
             from agents.master_agent import MasterAgent
-            from orchestrator import run_submasters
+            from orchestrator import spawn_submasters_and_run
             from utils.report_generator import generate_analysis_report
             
-            # Step 1: MasterAgent generates plan
+            # Step 1: MasterAgent generates plan using API method
             emit_pipeline_step(pipeline_id, "master_planning", "started")
-            master = MasterAgent()
-            goal = metadata.get("user_notes", "Process the document according to standard workflow.")
+            master = MasterAgent(pipeline_id=pipeline_id)
+            
+            # Get intent and context from request or metadata
+            high_level_intent = None
+            document_context = None
+            if request:
+                high_level_intent = getattr(request, 'high_level_intent', None)
+                document_context = getattr(request, 'document_context', None)
+            
+            if not high_level_intent:
+                high_level_intent = metadata.get("user_notes", "Analyze and summarize the document")
+            
             try:
-                plan = master.ask_llm_for_plan(goal, metadata)
+                plan = master.execute_api(
+                    metadata_path=metadata_path,
+                    high_level_intent=high_level_intent,
+                    user_document_context=document_context
+                )
             except Exception as e:
                 raise RuntimeError(f"MasterAgent failed to generate plan: {e}")
             
@@ -294,7 +324,7 @@ class PipelineManager:
             self._update_progress(pipeline_id, 30)
             
             # Step 2: Wait for approval if needed
-            auto_approve = self._pipelines[pipeline_id].get("auto_approve", False)
+            auto_approve = self._pipelines[pipeline_id].get("auto_approve", True)
             if not auto_approve:
                 self._update_status(pipeline_id, PipelineStatus.AWAITING_APPROVAL, step="awaiting_approval")
                 event_bus.emit_simple(
@@ -313,14 +343,31 @@ class PipelineManager:
             self._update_status(pipeline_id, PipelineStatus.RUNNING, step="orchestration")
             emit_pipeline_step(pipeline_id, "orchestration", "started")
             
-            results = run_submasters(plan, metadata, pipeline_id=pipeline_id)
+            # Initialize ResidualAgent for context coordination
+            import ray
+            from agents.residual_agent import ResidualAgentActor
+            if not ray.is_initialized():
+                ray.init(ignore_reinit_error=True, num_cpus=4)
+            
+            # Create ResidualAgent with pipeline_id for event tracking
+            residual = ResidualAgentActor.remote(pipeline_id=pipeline_id)
+            
+            # Add pipeline_id to metadata for agents
+            metadata["pipeline_id"] = pipeline_id
+            
+            results = spawn_submasters_and_run(plan, metadata, residual_handle=residual, pipeline_id=pipeline_id)
             
             emit_pipeline_step(pipeline_id, "orchestration", "completed", {"num_results": len(results)})
             self._update_progress(pipeline_id, 80)
             
-            # Step 4: Generate report
+            # Step 4: Generate report using Reducer
             self._update_status(pipeline_id, PipelineStatus.RUNNING, step="report_generation")
             emit_pipeline_step(pipeline_id, "report_generation", "started")
+            
+            # Use Reducer for aggregation
+            from workflows.reducer import Reducer
+            reducer = Reducer(pipeline_id=pipeline_id)
+            reduced_results = reducer.reduce(list(results.values()))
             
             report = generate_analysis_report(results, metadata)
             

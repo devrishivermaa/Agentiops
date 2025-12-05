@@ -71,7 +71,15 @@ class PipelineRunCreate(BaseModel):
     """Request to start a new pipeline run"""
     file_path: str = Field(..., description="Path to the PDF file to process")
     user_notes: Optional[str] = Field(None, description="Optional user notes for processing")
-    auto_approve: bool = Field(False, description="Auto-approve SubMaster plan without user feedback")
+    high_level_intent: Optional[str] = Field(
+        None, 
+        description="High-level intent for document processing (e.g., 'Summarize for presentation')"
+    )
+    document_context: Optional[str] = Field(
+        None, 
+        description="Additional context about the document content"
+    )
+    auto_approve: bool = Field(True, description="Auto-approve SubMaster plan without user feedback")
     max_parallel_submasters: Optional[int] = Field(None, ge=1, le=10, description="Max parallel SubMasters")
     num_workers_per_submaster: Optional[int] = Field(None, ge=1, le=10, description="Workers per SubMaster")
 
@@ -79,7 +87,9 @@ class PipelineRunCreate(BaseModel):
 class PipelineRunFromMetadata(BaseModel):
     """Request to start pipeline from existing metadata"""
     metadata_path: str = Field(..., description="Path to metadata JSON file")
-    auto_approve: bool = Field(False, description="Auto-approve SubMaster plan")
+    high_level_intent: Optional[str] = Field(None, description="High-level intent for processing")
+    document_context: Optional[str] = Field(None, description="Additional document context")
+    auto_approve: bool = Field(True, description="Auto-approve SubMaster plan")
 
 
 class PipelineApproval(BaseModel):
@@ -261,6 +271,78 @@ class WSMessage(BaseModel):
 class WSSubscribe(BaseModel):
     """WebSocket subscription request"""
     pipeline_id: str = "*"  # "*" for all pipelines
+
+
+# ==================== Session & Workflow Models ====================
+
+class SessionCreate(BaseModel):
+    """Response when a new processing session is created"""
+    session_id: str
+    file_path: str
+    file_name: str
+    status: str = "awaiting_intent"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class IntentSubmit(BaseModel):
+    """Request to submit user intent for a session"""
+    high_level_intent: str = Field(..., description="What you want to do with the document")
+    document_context: Optional[str] = Field(None, description="Additional context about the document")
+
+
+class MetadataResponse(BaseModel):
+    """Response containing generated metadata for approval"""
+    session_id: str
+    metadata_path: str
+    metadata: Dict[str, Any]
+    status: str = "awaiting_approval"
+
+
+class MetadataApproval(BaseModel):
+    """Request to approve or modify metadata"""
+    approved: bool
+    modified_metadata: Optional[Dict[str, Any]] = Field(None, description="Modified metadata if not approved as-is")
+
+
+class SessionStatus(BaseModel):
+    """Current status of a processing session"""
+    session_id: str
+    status: str  # awaiting_intent, awaiting_approval, processing, completed, failed
+    file_name: str
+    file_path: str
+    pipeline_id: Optional[str] = None
+    metadata_path: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    error: Optional[str] = None
+
+
+# ==================== Chat/RAG Models ====================
+
+class ChatMessage(BaseModel):
+    """A single chat message"""
+    role: str = Field(..., description="'user' or 'assistant'")
+    content: str
+
+
+class ChatRequest(BaseModel):
+    """Request to chat with processed document"""
+    question: str = Field(..., description="Question to ask about the document")
+    top_k: int = Field(5, ge=1, le=20, description="Number of context chunks to retrieve")
+
+
+class ChatResponse(BaseModel):
+    """Response from chat with document"""
+    question: str
+    answer: str
+    sources: List[Dict[str, Any]] = Field(default_factory=list)
+    context_used: int = Field(0, description="Number of characters of context used")
+
+
+class ChatHistory(BaseModel):
+    """Chat history for a session"""
+    session_id: str
+    messages: List[ChatMessage] = Field(default_factory=list)
 
 
 class WSEventPayload(BaseModel):

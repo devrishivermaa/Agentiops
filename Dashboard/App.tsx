@@ -3,14 +3,15 @@ import { useStore } from "./store";
 import { AgentVisualization } from "./components/AgentVisualization";
 import { EventLog } from "./components/EventLog";
 import { NewPipelinePage } from "./components/NewPipelinePage";
+import { RagChat } from "./components/RagChat";
 import {
   LayoutDashboard,
   Settings,
-  History,
   Activity,
   Wifi,
   WifiOff,
   Play,
+  MessageSquare,
 } from "lucide-react";
 import { simulatePipeline } from "./services/mockSimulation";
 
@@ -20,10 +21,14 @@ export default function App() {
     setWsConnected,
     processIncomingEvent,
     pipeline,
+    session,
     resetPipeline,
+    resetSession,
   } = useStore();
 
-  const [activeTab, setActiveTab] = useState<"upload" | "dashboard">("upload");
+  const [activeTab, setActiveTab] = useState<"upload" | "dashboard" | "chat">(
+    "upload"
+  );
 
   // WebSocket Connection Logic
   useEffect(() => {
@@ -31,11 +36,13 @@ export default function App() {
     let reconnectTimer: any;
 
     const connect = () => {
-      // In a real scenario, this connects to ws://localhost:8000/api/ws
-      // For this demo, we will simulate a failed connection gracefully if backend isn't there
-      // or just stay disconnected until "Simulation" is triggered.
+      // Connect to the API WebSocket
       try {
-        socket = new WebSocket("ws://localhost:8000/api/ws");
+        const wsUrl = session.pipelineId
+          ? `ws://localhost:8000/api/ws/${session.pipelineId}`
+          : "ws://localhost:8000/api/ws";
+
+        socket = new WebSocket(wsUrl);
 
         socket.onopen = () => {
           setWsConnected(true);
@@ -44,7 +51,26 @@ export default function App() {
 
         socket.onmessage = (event) => {
           const data = JSON.parse(event.data);
-          processIncomingEvent(data);
+          console.log("WebSocket message received:", data.type, data);
+
+          // Handle both direct events and wrapped events
+          if (data.type === "event" && data.payload) {
+            console.log("Processing event:", data.payload.event_type);
+            processIncomingEvent(data.payload);
+          } else if (data.type === "history" && data.payload?.events) {
+            // Process event history
+            console.log(
+              "Processing history:",
+              data.payload.events.length,
+              "events"
+            );
+            data.payload.events.forEach((evt: any) =>
+              processIncomingEvent(evt)
+            );
+          } else {
+            console.log("Processing direct event:", data.event_type);
+            processIncomingEvent(data);
+          }
         };
 
         socket.onclose = () => {
@@ -68,9 +94,9 @@ export default function App() {
       if (socket) socket.close();
       if (reconnectTimer) clearTimeout(reconnectTimer);
     };
-  }, []);
+  }, [session.pipelineId]);
 
-  // Handler for uploading file (Simulated)
+  // Handler for uploading file (Simulated - legacy)
   const handleUpload = (file: File) => {
     resetPipeline();
     setActiveTab("dashboard");
@@ -89,8 +115,14 @@ export default function App() {
 
   const handleSimulate = () => {
     resetPipeline();
+    resetSession();
     setActiveTab("dashboard");
     simulatePipeline("pipe_sim_" + Date.now(), processIncomingEvent);
+  };
+
+  // Handler for when pipeline actually starts via API
+  const handlePipelineStarted = () => {
+    setActiveTab("dashboard");
   };
 
   return (
@@ -132,9 +164,21 @@ export default function App() {
             <span className="hidden md:block">Live View</span>
           </button>
 
-          <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-zinc-400 hover:bg-zinc-800 transition-colors">
-            <History size={20} />
-            <span className="hidden md:block">History</span>
+          <button
+            onClick={() => setActiveTab("chat")}
+            disabled={pipeline.status !== "completed"}
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+              activeTab === "chat"
+                ? "bg-violet-500/10 text-violet-400"
+                : "text-zinc-400 hover:bg-zinc-800"
+            } ${
+              pipeline.status !== "completed"
+                ? "opacity-50 cursor-not-allowed"
+                : ""
+            }`}
+          >
+            <MessageSquare size={20} />
+            <span className="hidden md:block">Chat (RAG)</span>
           </button>
         </nav>
 
@@ -160,10 +204,14 @@ export default function App() {
             <h1 className="text-xl font-semibold">
               {activeTab === "upload"
                 ? "Initialize Pipeline"
+                : activeTab === "chat"
+                ? "Document Chat"
                 : `Pipeline: ${pipeline.fileName || "Active Session"}`}
             </h1>
             <p className="text-xs text-zinc-500">
-              {pipeline.status === "idle"
+              {activeTab === "chat"
+                ? "Ask questions about the processed document using RAG"
+                : pipeline.status === "idle"
                 ? "Ready to process"
                 : `Status: ${pipeline.status.toUpperCase()} • Step: ${
                     pipeline.currentStep
@@ -185,9 +233,11 @@ export default function App() {
                 onSimulate={handleSimulate}
                 isProcessing={pipeline.status === "running"}
                 isConnected={wsConnected}
+                onPipelineStarted={handlePipelineStarted}
               />
             )}
             {activeTab === "dashboard" && <AgentVisualization />}
+            {activeTab === "chat" && <RagChat />}
           </div>
 
           {/* Event Log Panel - only show in dashboard */}

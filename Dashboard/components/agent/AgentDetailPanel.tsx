@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AgentNode, AgentStatus, AgentType } from "../../types";
+import { AgentNode, AgentStatus, AgentType, AgentEventLog } from "../../types";
+import { useStore } from "../../store";
 import {
   BrainCircuit,
   BookOpen,
@@ -17,6 +18,7 @@ import {
   Zap,
   BarChart3,
   Layers,
+  Globe,
 } from "lucide-react";
 
 interface AgentDetailProps {
@@ -33,39 +35,60 @@ export const AgentDetailPanel: React.FC<AgentDetailProps> = ({
   const [activeTab, setActiveTab] = useState<"overview" | "logs" | "output">(
     "overview"
   );
+  const { downloadReport, downloadJson, pipeline, outputPaths } = useStore();
 
-  // Mock logs with timestamps
-  const logs = [
-    {
-      time: new Date(Date.now() - 12000),
-      msg: "Agent spawned successfully",
-      type: "info",
-    },
-    {
-      time: new Date(Date.now() - 10000),
-      msg: "Agent initialized",
-      type: "info",
-    },
-    {
-      time: new Date(Date.now() - 8000),
-      msg: `Assigned role: ${agent.metadata?.role || "Worker"}`,
-      type: "success",
-    },
-    agent.status === AgentStatus.PROCESSING
-      ? {
-          time: new Date(),
-          msg: "Processing data chunks...",
-          type: "processing",
-        }
-      : null,
-    agent.status === AgentStatus.COMPLETED
-      ? {
-          time: new Date(),
-          msg: "Task completed successfully.",
-          type: "success",
-        }
-      : null,
-  ].filter(Boolean) as Array<{ time: Date; msg: string; type: string }>;
+  // Use real event logs from agent or fallback to generated logs
+  const logs: Array<{ time: Date; msg: string; type: string }> =
+    agent.events?.length > 0
+      ? agent.events.map((e: AgentEventLog) => ({
+          time:
+            e.timestamp instanceof Date ? e.timestamp : new Date(e.timestamp),
+          msg: e.message,
+          type:
+            e.eventType.includes("completed") || e.eventType.includes("success")
+              ? "success"
+              : e.eventType.includes("processing") ||
+                e.eventType.includes("started")
+              ? "processing"
+              : e.eventType.includes("failed") || e.eventType.includes("error")
+              ? "error"
+              : "info",
+        }))
+      : ([
+          {
+            time: new Date(agent.startTime || Date.now() - 12000),
+            msg: "Agent spawned successfully",
+            type: "info",
+          },
+          {
+            time: new Date(
+              agent.startTime ? agent.startTime + 2000 : Date.now() - 10000
+            ),
+            msg: "Agent initialized",
+            type: "info",
+          },
+          {
+            time: new Date(
+              agent.startTime ? agent.startTime + 4000 : Date.now() - 8000
+            ),
+            msg: `Assigned role: ${agent.metadata?.role || "Worker"}`,
+            type: "success",
+          },
+          agent.status === AgentStatus.PROCESSING
+            ? {
+                time: new Date(),
+                msg: "Processing data chunks...",
+                type: "processing",
+              }
+            : null,
+          agent.status === AgentStatus.COMPLETED
+            ? {
+                time: new Date(agent.endTime || Date.now()),
+                msg: "Task completed successfully.",
+                type: "success",
+              }
+            : null,
+        ].filter(Boolean) as Array<{ time: Date; msg: string; type: string }>);
 
   // Dynamic Output Generation
   const getOutputs = () => {
@@ -79,36 +102,62 @@ export const AgentDetailPanel: React.FC<AgentDetailProps> = ({
         content:
           "Pipeline execution completed successfully. All sub-tasks aggregated.",
       });
-      outputs.push({
-        type: "download",
-        label: "Final_Report_2024.pdf",
-        size: "2.4 MB",
-        icon: <FileText size={18} />,
-      });
+      if (pipeline.status === "completed") {
+        outputs.push({
+          type: "download",
+          label: "Download Analysis Report (PDF)",
+          size: outputPaths.reportPath ? "Available" : "Generating...",
+          icon: <FileText size={18} />,
+          action: downloadReport,
+        });
+        outputs.push({
+          type: "download",
+          label: "Download Results (JSON)",
+          size: outputPaths.jsonPath ? "Available" : "Generating...",
+          icon: <FileJson size={18} />,
+          action: downloadJson,
+        });
+      }
       outputs.push({
         type: "json",
         label: "analysis_data.json",
-        size: "156 KB",
+        size: "Preview",
         icon: <FileJson size={18} />,
         jsonContent: {
           pipeline_id: agent.id,
           status: "success",
           timestamp: new Date().toISOString(),
           metrics: {
-            total_processing_time_ms: 4520,
-            pages_analyzed: 45,
-            agents_spawned: 12,
-          },
-          risk_assessment: {
-            score: 8.5,
-            high_priority_flags: [
-              "compliance_warning_pg4",
-              "missing_date_pg12",
-            ],
-            entities_detected: 142,
+            total_processing_time_ms:
+              agent.endTime && agent.startTime
+                ? agent.endTime - agent.startTime
+                : 0,
+            submaster_count: agent.metadata?.submasterCount || "N/A",
           },
         },
       });
+    } else if (agent.type === AgentType.RESIDUAL) {
+      outputs.push({
+        type: "summary",
+        content:
+          "Global context coordination completed. Context broadcast to all submasters.",
+      });
+      if (agent.metadata?.context) {
+        outputs.push({
+          type: "json",
+          label: "global_context.json",
+          size: "Context Data",
+          icon: <FileJson size={18} />,
+          jsonContent: {
+            agent_id: agent.id,
+            role: agent.metadata?.role,
+            context_preview: agent.metadata.context,
+            broadcast_time: agent.endTime
+              ? new Date(agent.endTime).toISOString()
+              : null,
+          },
+        });
+      }
     } else if (agent.type === AgentType.SUBMASTER) {
       const pageRange = Array.isArray(agent.metadata?.pages)
         ? `${agent.metadata.pages[0]}-${agent.metadata.pages[1]}`
@@ -116,34 +165,50 @@ export const AgentDetailPanel: React.FC<AgentDetailProps> = ({
 
       outputs.push({
         type: "summary",
-        content: `Section analysis complete for pages ${pageRange}.`,
+        content:
+          agent.metadata?.summary ||
+          `Section analysis complete for pages ${pageRange}.`,
       });
       outputs.push({
         type: "json",
         label: "section_metrics.json",
-        size: "42 KB",
+        size: "Section Data",
         icon: <FileJson size={18} />,
         jsonContent: {
           agent_id: agent.id,
           role: agent.metadata?.role,
           pages_covered: agent.metadata?.pages,
-          findings_count: 15,
-          confidence_score: 0.94,
-          extracted_terms: ["Revenue", "Liability", "FY2024"],
+          processing_time_ms:
+            agent.endTime && agent.startTime
+              ? agent.endTime - agent.startTime
+              : null,
         },
       });
     } else {
       // Worker
       outputs.push({
         type: "summary",
-        content: `Data extraction finished for Page ${
-          agent.metadata?.pages || "?"
-        }.`,
+        content:
+          agent.metadata?.summary ||
+          `Data extraction finished for Page ${agent.metadata?.pages || "?"}.`,
       });
-      outputs.push({
-        type: "data",
-        content: "Confidence Score: 98.5% | Entities Extracted: 42",
-      });
+      if (
+        agent.metadata?.entities?.length ||
+        agent.metadata?.keywords?.length
+      ) {
+        outputs.push({
+          type: "json",
+          label: "page_analysis.json",
+          size: "Page Data",
+          icon: <FileJson size={18} />,
+          jsonContent: {
+            agent_id: agent.id,
+            page: agent.metadata?.pages,
+            entities: agent.metadata?.entities || [],
+            keywords: agent.metadata?.keywords || [],
+          },
+        });
+      }
     }
 
     return outputs;
@@ -178,6 +243,8 @@ export const AgentDetailPanel: React.FC<AgentDetailProps> = ({
         return "from-purple-500/20 to-purple-600/5 text-purple-400 border-purple-500/30";
       case AgentType.SUBMASTER:
         return "from-amber-500/20 to-amber-600/5 text-amber-400 border-amber-500/30";
+      case AgentType.RESIDUAL:
+        return "from-cyan-500/20 to-cyan-600/5 text-cyan-400 border-cyan-500/30";
       default:
         return "from-blue-500/20 to-blue-600/5 text-blue-400 border-blue-500/30";
     }
@@ -196,7 +263,7 @@ export const AgentDetailPanel: React.FC<AgentDetailProps> = ({
         animate={{ scale: 1, y: 0, opacity: 1 }}
         exit={{ scale: 0.95, y: 20, opacity: 0 }}
         transition={{ type: "spring", damping: 25, stiffness: 300 }}
-        className="bg-zinc-900 border border-zinc-700/50 w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden relative ring-1 ring-white/5"
+        className="bg-zinc-900 border border-zinc-700/50 w-full max-w-3xl max-h-[90vh] rounded-2xl shadow-2xl overflow-hidden relative ring-1 ring-white/5 flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -215,6 +282,8 @@ export const AgentDetailPanel: React.FC<AgentDetailProps> = ({
                   <BrainCircuit size={28} />
                 ) : agent.type === AgentType.SUBMASTER ? (
                   <BookOpen size={28} />
+                ) : agent.type === AgentType.RESIDUAL ? (
+                  <Globe size={28} />
                 ) : (
                   <FileText size={28} />
                 )}
@@ -254,7 +323,7 @@ export const AgentDetailPanel: React.FC<AgentDetailProps> = ({
         </div>
 
         {/* Content */}
-        <div className="p-6 grid gap-6 grid-cols-1 md:grid-cols-2">
+        <div className="flex-1 overflow-y-auto p-6 grid gap-6 grid-cols-1 md:grid-cols-2">
           {/* Stats Column */}
           <div className="space-y-6">
             <div className="bg-zinc-900/50 rounded-lg p-4 border border-zinc-800">
@@ -321,7 +390,10 @@ export const AgentDetailPanel: React.FC<AgentDetailProps> = ({
                           </button>
                         </div>
                       ) : out.type === "download" ? (
-                        <button className="flex items-center gap-3 w-full p-3 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 transition-colors group text-left">
+                        <button
+                          onClick={() => out.action && out.action()}
+                          className="flex items-center gap-3 w-full p-3 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 transition-colors group text-left"
+                        >
                           <div className="p-2 rounded bg-zinc-900 text-zinc-400 group-hover:text-primary transition-colors">
                             {out.icon}
                           </div>
@@ -355,8 +427,8 @@ export const AgentDetailPanel: React.FC<AgentDetailProps> = ({
           </div>
 
           {/* Logs Column */}
-          <div className="bg-black/20 rounded-lg border border-zinc-800 flex flex-col h-64 md:h-auto">
-            <div className="p-3 border-b border-zinc-800 bg-zinc-900/30 flex items-center justify-between">
+          <div className="bg-black/20 rounded-lg border border-zinc-800 flex flex-col min-h-[200px] max-h-[400px]">
+            <div className="p-3 border-b border-zinc-800 bg-zinc-900/30 flex items-center justify-between flex-shrink-0">
               <span className="text-xs font-mono text-zinc-400">
                 Activity Log
               </span>
@@ -364,7 +436,7 @@ export const AgentDetailPanel: React.FC<AgentDetailProps> = ({
                 <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
               )}
             </div>
-            <div className="flex-1 overflow-y-auto p-3 font-mono text-xs space-y-2">
+            <div className="flex-1 overflow-y-auto p-3 font-mono text-xs space-y-2 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent">
               {logs.map((log, i) => (
                 <div key={i} className="text-zinc-300 break-words">
                   <span className="text-zinc-600 mr-2">

@@ -34,6 +34,15 @@ class EventType(str, Enum):
     MASTER_AWAITING_FEEDBACK = "master.awaiting_feedback"
     MASTER_PLAN_APPROVED = "master.plan_approved"
     
+    # ResidualAgent events
+    RESIDUAL_INITIALIZED = "residual.initialized"
+    RESIDUAL_CONTEXT_GENERATING = "residual.context_generating"
+    RESIDUAL_CONTEXT_GENERATED = "residual.context_generated"
+    RESIDUAL_BROADCASTING = "residual.broadcasting"
+    RESIDUAL_BROADCAST_COMPLETE = "residual.broadcast_complete"
+    RESIDUAL_CONTEXT_ENHANCED = "residual.context_enhanced"
+    RESIDUAL_UPDATE_RECEIVED = "residual.update_received"
+    
     # SubMaster events
     SUBMASTER_SPAWNED = "submaster.spawned"
     SUBMASTER_INITIALIZED = "submaster.initialized"
@@ -41,12 +50,23 @@ class EventType(str, Enum):
     SUBMASTER_PROGRESS = "submaster.progress"
     SUBMASTER_COMPLETED = "submaster.completed"
     SUBMASTER_FAILED = "submaster.failed"
+    SUBMASTER_CONTEXT_RECEIVED = "submaster.context_received"
+    SUBMASTER_WORKERS_SPAWNED = "submaster.workers_spawned"
     
     # Worker events
     WORKER_SPAWNED = "worker.spawned"
+    WORKER_INITIALIZED = "worker.initialized"
     WORKER_PROCESSING = "worker.processing"
+    WORKER_PAGE_STARTED = "worker.page_started"
+    WORKER_PAGE_COMPLETED = "worker.page_completed"
     WORKER_COMPLETED = "worker.completed"
     WORKER_FAILED = "worker.failed"
+    WORKER_CONTEXT_RECEIVED = "worker.context_received"
+    
+    # Reducer events
+    REDUCER_STARTED = "reducer.started"
+    REDUCER_AGGREGATING = "reducer.aggregating"
+    REDUCER_COMPLETED = "reducer.completed"
     
     # System events
     SYSTEM_STATS = "system.stats"
@@ -416,4 +436,206 @@ def emit_worker_event(
         event_data,
         agent_id=worker_id,
         agent_type="worker",
+    )
+
+
+# ResidualAgent event helpers
+def emit_residual_event(
+    event_type: EventType,
+    pipeline_id: str,
+    residual_id: str,
+    data: Optional[Dict] = None,
+):
+    """Emit ResidualAgent event"""
+    event_bus.emit_simple(
+        event_type,
+        pipeline_id,
+        data or {},
+        agent_id=residual_id,
+        agent_type="residual",
+    )
+
+
+def emit_residual_context_generating(pipeline_id: str, residual_id: str):
+    """Emit context generation started event"""
+    emit_residual_event(
+        EventType.RESIDUAL_CONTEXT_GENERATING,
+        pipeline_id,
+        residual_id,
+        {"status": "generating"}
+    )
+
+
+def emit_residual_context_generated(pipeline_id: str, residual_id: str, context_keys: list):
+    """Emit context generated event"""
+    emit_residual_event(
+        EventType.RESIDUAL_CONTEXT_GENERATED,
+        pipeline_id,
+        residual_id,
+        {"context_keys": context_keys, "status": "generated"}
+    )
+
+
+def emit_residual_broadcasting(pipeline_id: str, residual_id: str, target: str, count: int):
+    """Emit broadcasting event"""
+    emit_residual_event(
+        EventType.RESIDUAL_BROADCASTING,
+        pipeline_id,
+        residual_id,
+        {"target": target, "count": count}
+    )
+
+
+def emit_residual_broadcast_complete(pipeline_id: str, residual_id: str, target: str):
+    """Emit broadcast complete event"""
+    emit_residual_event(
+        EventType.RESIDUAL_BROADCAST_COMPLETE,
+        pipeline_id,
+        residual_id,
+        {"target": target, "status": "complete"}
+    )
+
+
+def emit_residual_update_received(pipeline_id: str, residual_id: str, source: str, author: str):
+    """Emit update received event"""
+    emit_residual_event(
+        EventType.RESIDUAL_UPDATE_RECEIVED,
+        pipeline_id,
+        residual_id,
+        {"source": source, "author": author}
+    )
+
+
+# Reducer event helpers
+def emit_reducer_started(pipeline_id: str, num_results: int):
+    """Emit reducer started event"""
+    event_bus.emit_simple(
+        EventType.REDUCER_STARTED,
+        pipeline_id,
+        {"num_results": num_results},
+        agent_id="reducer",
+        agent_type="reducer",
+    )
+
+
+def emit_reducer_aggregating(pipeline_id: str, current: int, total: int):
+    """Emit reducer aggregating event"""
+    event_bus.emit_simple(
+        EventType.REDUCER_AGGREGATING,
+        pipeline_id,
+        {"current": current, "total": total, "progress_percent": round((current / total) * 100, 1) if total > 0 else 0},
+        agent_id="reducer",
+        agent_type="reducer",
+    )
+
+
+def emit_reducer_completed(pipeline_id: str, result_summary: Dict):
+    """Emit reducer completed event"""
+    event_bus.emit_simple(
+        EventType.REDUCER_COMPLETED,
+        pipeline_id,
+        result_summary,
+        agent_id="reducer",
+        agent_type="reducer",
+    )
+
+
+# SubMaster spawning events
+def emit_submaster_spawned(pipeline_id: str, submaster_id: str, role: str, sections: list, page_range: list):
+    """Emit submaster spawned event"""
+    event_bus.emit_simple(
+        EventType.SUBMASTER_SPAWNED,
+        pipeline_id,
+        {"role": role, "sections": sections, "page_range": page_range},
+        agent_id=submaster_id,
+        agent_type="submaster",
+    )
+
+
+def emit_submaster_initialized(pipeline_id: str, submaster_id: str, num_workers: int):
+    """Emit submaster initialized event"""
+    event_bus.emit_simple(
+        EventType.SUBMASTER_INITIALIZED,
+        pipeline_id,
+        {"num_workers": num_workers, "status": "ready"},
+        agent_id=submaster_id,
+        agent_type="submaster",
+    )
+
+
+def emit_submaster_processing(pipeline_id: str, submaster_id: str, num_pages: int):
+    """Emit submaster processing event"""
+    event_bus.emit_simple(
+        EventType.SUBMASTER_PROCESSING,
+        pipeline_id,
+        {"num_pages": num_pages, "status": "processing"},
+        agent_id=submaster_id,
+        agent_type="submaster",
+    )
+
+
+def emit_submaster_completed(pipeline_id: str, submaster_id: str, results_count: int, elapsed: float):
+    """Emit submaster completed event"""
+    event_bus.emit_simple(
+        EventType.SUBMASTER_COMPLETED,
+        pipeline_id,
+        {"results_count": results_count, "elapsed_seconds": elapsed, "status": "completed"},
+        agent_id=submaster_id,
+        agent_type="submaster",
+    )
+
+
+def emit_submaster_failed(pipeline_id: str, submaster_id: str, error: str):
+    """Emit submaster failed event"""
+    event_bus.emit_simple(
+        EventType.SUBMASTER_FAILED,
+        pipeline_id,
+        {"error": error, "status": "failed"},
+        agent_id=submaster_id,
+        agent_type="submaster",
+    )
+
+
+# Worker spawning and processing events
+def emit_worker_spawned(pipeline_id: str, worker_id: str, submaster_id: str):
+    """Emit worker spawned event"""
+    emit_worker_event(
+        EventType.WORKER_SPAWNED,
+        pipeline_id,
+        worker_id,
+        submaster_id,
+        {"status": "spawned"}
+    )
+
+
+def emit_worker_initialized(pipeline_id: str, worker_id: str, submaster_id: str):
+    """Emit worker initialized event"""
+    emit_worker_event(
+        EventType.WORKER_INITIALIZED,
+        pipeline_id,
+        worker_id,
+        submaster_id,
+        {"status": "ready"}
+    )
+
+
+def emit_worker_page_started(pipeline_id: str, worker_id: str, submaster_id: str, page: int):
+    """Emit worker page processing started event"""
+    emit_worker_event(
+        EventType.WORKER_PAGE_STARTED,
+        pipeline_id,
+        worker_id,
+        submaster_id,
+        {"page": page, "status": "processing"}
+    )
+
+
+def emit_worker_page_completed(pipeline_id: str, worker_id: str, submaster_id: str, page: int, from_cache: bool):
+    """Emit worker page processing completed event"""
+    emit_worker_event(
+        EventType.WORKER_PAGE_COMPLETED,
+        pipeline_id,
+        worker_id,
+        submaster_id,
+        {"page": page, "from_cache": from_cache, "status": "completed"}
     )

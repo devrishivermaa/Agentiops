@@ -7,29 +7,51 @@ from typing import Dict, Any, List, Optional
 from utils.logger import get_logger
 from utils.pdf_extractor import PDFExtractor
 from agents.worker_agent import WorkerAgent
-from pymongo import MongoClient
+from utils.mongo_helper import get_mongo_client
 import os
 
 logger = get_logger("SubMaster")
 
 
+def _emit_event_safe(event_type, pipeline_id, agent_id, agent_type, data=None):
+    """Safely emit events - works from within Ray actors via HTTP"""
+    try:
+        from api.event_emitter import emit_event_safe
+        # event_type can be EventType enum or string
+        event_type_str = event_type.value if hasattr(event_type, 'value') else str(event_type)
+        emit_event_safe(
+            event_type=event_type_str,
+            pipeline_id=pipeline_id,
+            agent_id=agent_id,
+            agent_type=agent_type,
+            data=data,
+        )
+    except Exception as e:
+        logger.debug(f"Event emission skipped: {e}")
+
+
 @ray.remote
 class SubMaster:
 
-    def __init__(self, plan_piece: Dict[str, Any], metadata: Dict[str, Any], residual_handle: Optional[Any] = None):
+    def __init__(self, plan_piece: Dict[str, Any], metadata: Dict[str, Any], 
+                 residual_handle: Optional[Any] = None, pipeline_id: Optional[str] = None):
         self.sm_id = plan_piece.get("submaster_id", f"SM-{uuid.uuid4().hex[:6].upper()}")
         self.role = plan_piece.get("role", "generic")
         self.sections = plan_piece.get("assigned_sections", [])
         self.pages = plan_piece.get("page_range", [1, 1])
         self.meta = metadata
         self.status = "initialized"
+        self.pipeline_id = pipeline_id or metadata.get("pipeline_id", "unknown")
 
         self.residual = residual_handle
         self.global_context: Dict[str, Any] = {}
 
         # -----------------------------------
-        # Mongo initialization
+        # Mongo initialization with proper SSL
         # -----------------------------------
+        self.mongo_sm_coll = None
+        self.mongo_worker_coll = None
+        
         try:
             uri = os.getenv("MONGO_URI")
             dbname = os.getenv("MONGO_DB")
@@ -37,18 +59,16 @@ class SubMaster:
             wk_coll = os.getenv("MONGO_WORKER_COLLECTION", "worker_results")
 
             if uri and dbname:
-                client = MongoClient(uri)
-                db = client[dbname]
-                self.mongo_sm_coll = db[sm_coll]
-                self.mongo_worker_coll = db[wk_coll]
-                logger.info(f"[{self.sm_id}] Mongo connected")
-            else:
-                self.mongo_sm_coll = None
-                self.mongo_worker_coll = None
+                client = get_mongo_client(uri)
+                if client:
+                    db = client[dbname]
+                    self.mongo_sm_coll = db[sm_coll]
+                    self.mongo_worker_coll = db[wk_coll]
+                    logger.info(f"[{self.sm_id}] Mongo connected")
+                else:
+                    logger.warning(f"[{self.sm_id}] Mongo connection failed, continuing without persistence")
         except Exception as e:
             logger.error(f"[{self.sm_id}] Mongo init failed {e}")
-            self.mongo_sm_coll = None
-            self.mongo_worker_coll = None
 
         # -----------------------------------
         # Runtime config
@@ -62,6 +82,23 @@ class SubMaster:
         self.workers: List[Any] = []
 
         logger.info(f"[{self.sm_id}] SubMaster initialized with {self.num_workers_per_submaster} workers")
+        
+        # Emit spawn event
+        self._emit_event("SUBMASTER_SPAWNED", {
+            "role": self.role,
+            "sections": self.sections,
+            "page_range": self.pages
+        })
+
+    def _emit_event(self, event_name: str, data: dict = None):
+        """Helper to emit events from this SubMaster"""
+        try:
+            from api.events import EventType
+            event_type = getattr(EventType, event_name, None)
+            if event_type:
+                _emit_event_safe(event_type, self.pipeline_id, self.sm_id, "submaster", data)
+        except Exception as e:
+            logger.debug(f"[{self.sm_id}] Event emission skipped: {e}")
 
     # ----------------------------------------------------------
     # allow orchestrator to fetch worker handles
@@ -76,6 +113,11 @@ class SubMaster:
         try:
             self.global_context = context or {}
             logger.info(f"[{self.sm_id}] Received global context with {len(self.global_context.keys())} keys")
+            
+            self._emit_event("SUBMASTER_CONTEXT_RECEIVED", {
+                "context_keys": list(self.global_context.keys())[:10],
+                "num_keys": len(self.global_context.keys())
+            })
 
             # If workers spawned, forward immediately
             if self.workers:
@@ -123,10 +165,18 @@ class SubMaster:
             worker = WorkerAgent.remote(
                 worker_id=wid,
                 llm_model=self.llm_model,
-                processing_requirements=self.processing_requirements
+                processing_requirements=self.processing_requirements,
+                pipeline_id=self.pipeline_id,
+                submaster_id=self.sm_id
             )
             self.workers.append(worker)
             logger.info(f"[{self.sm_id}] Created worker: {wid}")
+
+        # Emit workers spawned event
+        self._emit_event("SUBMASTER_WORKERS_SPAWNED", {
+            "num_workers": len(self.workers),
+            "worker_ids": [f"{self.sm_id}-W{i+1}" for i in range(self.num_workers_per_submaster)]
+        })
 
         # initialize workers
         try:
@@ -179,6 +229,12 @@ class SubMaster:
             except Exception as e:
                 logger.exception(f"[{self.sm_id}] Could not pull global context from residual: {e}")
 
+        # Emit initialized event
+        self._emit_event("SUBMASTER_INITIALIZED", {
+            "num_workers": len(self.workers),
+            "status": "ready"
+        })
+
         return {"sm_id": self.sm_id, "status": "ready", "workers": len(self.workers)}
 
     # ----------------------------------------------------------
@@ -224,7 +280,19 @@ class SubMaster:
             pages.extend(range(s, e + 1))
 
         if not pages:
+            self._emit_event("SUBMASTER_COMPLETED", {
+                "results_count": 0,
+                "elapsed_seconds": 0,
+                "status": "completed"
+            })
             return {"sm_id": self.sm_id, "status": "completed", "output": {"results": []}, "elapsed": 0}
+
+        # Emit processing started
+        self._emit_event("SUBMASTER_PROCESSING", {
+            "num_pages": len(pages),
+            "page_range": self.pages,
+            "status": "processing"
+        })
 
         self._report_worker_allocation(pages)
 
@@ -275,8 +343,19 @@ class SubMaster:
         try:
             results = ray.get(futures)
             logger.info(f"[{self.sm_id}] Collected {len(results)} results")
+            
+            # Emit progress events as results come in
+            for idx, result in enumerate(results):
+                self._emit_event("SUBMASTER_PROGRESS", {
+                    "current_page": idx + 1,
+                    "total_pages": len(pages),
+                    "progress_percent": round(((idx + 1) / len(pages)) * 100, 1),
+                    "page": result.get("page"),
+                    "worker_id": result.get("worker_id")
+                })
         except Exception as e:
             logger.error(f"[{self.sm_id}] Worker error {e}")
+            self._emit_event("SUBMASTER_FAILED", {"error": str(e), "status": "failed"})
             results = []
 
         # Check if any workers actually used global context
@@ -320,6 +399,14 @@ class SubMaster:
                 "results": results
             }
         }
+
+        # Emit completed event
+        self._emit_event("SUBMASTER_COMPLETED", {
+            "results_count": len(results),
+            "elapsed_seconds": elapsed,
+            "context_usage": f"{context_usage}/{len(results)}",
+            "status": "completed"
+        })
 
         # **FIX: Save SubMaster aggregated results to MongoDB**
         if self.mongo_sm_coll is not None:
