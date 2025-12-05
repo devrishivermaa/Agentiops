@@ -314,6 +314,11 @@ class PipelineManager:
                 "pdf_path": reducer_results.get("phases", {}).get("merger", {}).get("pdf_path")
             }
             
+            # Save final synthesis as JSON (first pipeline method)
+            json_path = self._save_final_results_json(pipeline_id, final_result, metadata)
+            if json_path:
+                final_result["json_path"] = json_path
+            
             # Complete
             self._update_status(pipeline_id, PipelineStatus.COMPLETED)
             self._pipelines[pipeline_id]["result"] = final_result
@@ -658,7 +663,7 @@ class PipelineManager:
     def _generate_final_summary_pdf(self, pipeline_id: str, merger_data: dict) -> Optional[str]:
         """
         Generate a comprehensive PDF report from Master Merger results.
-        Mirrors the PDF generation from run_unified_pipeline.py
+        Mirrors the FULL PDF generation from run_unified_pipeline.py
         """
         try:
             from reportlab.lib.pagesizes import letter
@@ -712,6 +717,15 @@ class PipelineManager:
                 spaceBefore=12
             )
             
+            subheading_style = ParagraphStyle(
+                'CustomSubHeading',
+                parent=styles['Heading3'],
+                fontSize=14,
+                textColor='#34495e',
+                spaceAfter=10,
+                spaceBefore=10
+            )
+            
             body_style = ParagraphStyle(
                 'CustomBody',
                 parent=styles['BodyText'],
@@ -754,7 +768,81 @@ class PipelineManager:
                 story.append(Paragraph(f"<b>Insights:</b> {stats.get('total_insights', 0)}", body_style))
                 story.append(Spacer(1, 0.2*inch))
             
-            # Insights and Conclusions
+            story.append(PageBreak())
+            
+            # Detailed Synthesis - FULL VERSION
+            detailed = merger_data.get('detailed_synthesis', {})
+            if detailed:
+                story.append(Paragraph("Detailed Analysis", heading_style))
+                
+                # Section-by-section analysis
+                sections = detailed.get('sections', [])
+                if sections:
+                    story.append(Paragraph("Section Analysis", subheading_style))
+                    for section in sections:
+                        section_id = section.get('section_id', 'Unknown')
+                        synthesis = section.get('synthesis', '')
+                        
+                        story.append(Paragraph(f"<b>{section_id}</b>", body_style))
+                        story.append(Paragraph(str(synthesis), body_style))
+                        
+                        # Key entities
+                        entities = section.get('key_entities', [])
+                        if entities:
+                            entities_str = ', '.join(str(e) for e in entities[:10])
+                            story.append(Paragraph(f"<i>Key Entities: {entities_str}</i>", body_style))
+                        
+                        story.append(Spacer(1, 0.15*inch))
+                
+                # Cross-section analysis
+                cross_section = detailed.get('cross_section_analysis', '')
+                if cross_section:
+                    story.append(PageBreak())
+                    story.append(Paragraph("Cross-Section Analysis", subheading_style))
+                    story.append(Paragraph(str(cross_section), body_style))
+                    story.append(Spacer(1, 0.2*inch))
+                
+                # Technical deep dive
+                technical = detailed.get('technical_deep_dive', '')
+                if technical:
+                    story.append(PageBreak())
+                    story.append(Paragraph("Technical Deep Dive", subheading_style))
+                    story.append(Paragraph(str(technical), body_style))
+                    story.append(Spacer(1, 0.2*inch))
+            
+            # Metadata - FULL VERSION
+            metadata = merger_data.get('metadata', {})
+            if metadata:
+                story.append(PageBreak())
+                story.append(Paragraph("Key Metadata", heading_style))
+                
+                # Top entities
+                top_entities = metadata.get('top_entities', {})
+                if top_entities:
+                    story.append(Paragraph("Top Entities", subheading_style))
+                    entities_list = sorted(top_entities.items(), key=lambda x: x[1] if isinstance(x[1], (int, float)) else 0, reverse=True)[:20]
+                    entities_text = ', '.join([f"{k} ({v})" for k, v in entities_list])
+                    story.append(Paragraph(entities_text, body_style))
+                    story.append(Spacer(1, 0.1*inch))
+                
+                # Top keywords
+                top_keywords = metadata.get('top_keywords', {})
+                if top_keywords:
+                    story.append(Paragraph("Top Keywords", subheading_style))
+                    keywords_list = sorted(top_keywords.items(), key=lambda x: x[1] if isinstance(x[1], (int, float)) else 0, reverse=True)[:20]
+                    keywords_text = ', '.join([f"{k} ({v})" for k, v in keywords_list])
+                    story.append(Paragraph(keywords_text, body_style))
+                    story.append(Spacer(1, 0.1*inch))
+                
+                # Document themes
+                themes = metadata.get('document_themes', [])
+                if themes:
+                    story.append(Paragraph("Document Themes", subheading_style))
+                    themes_text = ', '.join(str(t) for t in themes[:15])
+                    story.append(Paragraph(themes_text, body_style))
+                    story.append(Spacer(1, 0.1*inch))
+            
+            # Insights and Conclusions - FULL VERSION
             insights = merger_data.get('insights_and_conclusions', {})
             if insights:
                 story.append(PageBreak())
@@ -763,7 +851,7 @@ class PipelineManager:
                 # Key findings
                 findings = insights.get('key_findings', [])
                 if findings:
-                    story.append(Paragraph("<b>Key Findings:</b>", body_style))
+                    story.append(Paragraph("Key Findings", subheading_style))
                     for i, finding in enumerate(findings[:10], 1):
                         story.append(Paragraph(f"{i}. {finding}", body_style))
                     story.append(Spacer(1, 0.15*inch))
@@ -771,8 +859,32 @@ class PipelineManager:
                 # Conclusions
                 conclusions = insights.get('conclusions', '')
                 if conclusions:
-                    story.append(Paragraph("<b>Conclusions:</b>", body_style))
+                    story.append(Paragraph("Conclusions", subheading_style))
                     story.append(Paragraph(str(conclusions), body_style))
+                    story.append(Spacer(1, 0.15*inch))
+                
+                # Implications
+                implications = insights.get('implications', [])
+                if implications:
+                    story.append(Paragraph("Implications", subheading_style))
+                    for i, impl in enumerate(implications[:10], 1):
+                        story.append(Paragraph(f"{i}. {impl}", body_style))
+                    story.append(Spacer(1, 0.15*inch))
+                
+                # Recommendations
+                recommendations = insights.get('recommendations', [])
+                if recommendations:
+                    story.append(Paragraph("Recommendations", subheading_style))
+                    for i, rec in enumerate(recommendations[:10], 1):
+                        story.append(Paragraph(f"{i}. {rec}", body_style))
+                    story.append(Spacer(1, 0.15*inch))
+                
+                # Future directions
+                future = insights.get('future_directions', [])
+                if future:
+                    story.append(Paragraph("Future Directions", subheading_style))
+                    for i, direction in enumerate(future[:10], 1):
+                        story.append(Paragraph(f"{i}. {direction}", body_style))
             
             # Build PDF
             doc.build(story)
@@ -782,6 +894,53 @@ class PipelineManager:
             
         except Exception as e:
             logger.exception(f"[{pipeline_id}] Failed to generate PDF: {e}")
+            return None
+    
+    def _save_final_results_json(self, pipeline_id: str, final_result: dict, metadata: dict) -> Optional[str]:
+        """
+        Save the final pipeline results as a JSON file.
+        Matches the output format from run_unified_pipeline.py
+        """
+        import json
+        
+        try:
+            # Create filename with timestamp
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            doc_name = os.path.splitext(metadata.get("file_name", "document"))[0]
+            json_filename = f"{doc_name}_results_{timestamp}.json"
+            json_path = str(self._output_dir / json_filename)
+            
+            logger.info(f"[{pipeline_id}] Saving final results JSON: {json_path}")
+            
+            # Build a comprehensive results object
+            results_to_save = {
+                "pipeline_id": pipeline_id,
+                "pipeline_type": "unified",
+                "timestamp": datetime.now().isoformat(),
+                "metadata": {
+                    "file_name": metadata.get("file_name", ""),
+                    "file_path": metadata.get("file_path", ""),
+                    "total_pages": metadata.get("total_pages", 0),
+                    "user_notes": metadata.get("user_notes", ""),
+                },
+                "mapper_report": final_result.get("mapper_report", {}),
+                "reducer_results": {
+                    "status": final_result.get("reducer_results", {}).get("status", "unknown"),
+                    "phases": final_result.get("reducer_results", {}).get("phases", {}),
+                },
+                "final_summary": final_result.get("final_summary", {}),
+                "pdf_path": final_result.get("pdf_path", ""),
+            }
+            
+            # Write to JSON file
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(results_to_save, f, indent=2, ensure_ascii=False, default=str)
+            
+            logger.info(f"[{pipeline_id}] Final results JSON saved: {json_path}")
+            return json_path
+            
+        except Exception as e:
+            logger.exception(f"[{pipeline_id}] Failed to save results JSON: {e}")
             return None
     
     def _run_pipeline_from_metadata_thread(
@@ -911,6 +1070,11 @@ class PipelineManager:
                 "final_summary": reducer_results.get("phases", {}).get("merger", {}).get("data", {}),
                 "pdf_path": reducer_results.get("phases", {}).get("merger", {}).get("pdf_path")
             }
+            
+            # Save final synthesis as JSON (metadata pipeline method)
+            json_path = self._save_final_results_json(pipeline_id, final_result, metadata)
+            if json_path:
+                final_result["json_path"] = json_path
             
             # Complete
             self._update_status(pipeline_id, PipelineStatus.COMPLETED)
