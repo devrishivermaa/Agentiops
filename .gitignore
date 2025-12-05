@@ -22,3 +22,17 @@ __pycache__/
 *.jar
 *.war
 *.ear
+
+# Node/Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+build/
+.env.local
+.env.*.local
+
+# Build outputs
+/dist/
+/build/
+.env

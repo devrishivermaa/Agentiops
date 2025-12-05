@@ -11,6 +11,7 @@ This Ray actor:
 - Broadcasts enhanced context to registered Worker actors
 - Optionally persists snapshots to MongoDB (if MONGO_URI and MONGO_DB set)
 - Provides RPC endpoints for SubMasters and Workers to push updates
+- Emits events through the API EventBus for real-time visualization
 """
 
 import os
@@ -22,20 +23,38 @@ import threading
 from typing import Dict, Any, List, Optional, Any
 
 import ray
-from pymongo import MongoClient
 from pymongo.collection import Collection
 
 from utils.logger import get_logger
 from utils.llm_helper import LLMProcessor
+from utils.mongo_helper import get_mongo_client
 
 logger = get_logger("ResidualAgent")
 
 
+def _emit_event_safe(event_type, pipeline_id, agent_id, agent_type, data=None):
+    """Safely emit events - works from within Ray actors via HTTP"""
+    try:
+        from api.event_emitter import emit_event_safe
+        # event_type can be EventType enum or string
+        event_type_str = event_type.value if hasattr(event_type, 'value') else str(event_type)
+        emit_event_safe(
+            event_type=event_type_str,
+            pipeline_id=pipeline_id,
+            agent_id=agent_id,
+            agent_type=agent_type,
+            data=data,
+        )
+    except Exception as e:
+        logger.debug(f"Event emission skipped: {e}")
+
+
 @ray.remote
 class ResidualAgentActor:
-    def __init__(self, model: Optional[str] = None, persist: bool = True):
+    def __init__(self, model: Optional[str] = None, persist: bool = True, pipeline_id: str = None):
         self.id = f"RA-{uuid.uuid4().hex[:8].upper()}"
         self.lock = threading.RLock()
+        self.pipeline_id = pipeline_id or "unknown"
 
         model = model or os.getenv("LLM_MODEL", "mistral-small-latest")
         # initialize LLM processor (LLMProcessor should handle its own exceptions)
@@ -68,7 +87,7 @@ class ResidualAgentActor:
 
         # persistence
         self.persist = persist
-        self.mongo_client: Optional[MongoClient] = None
+        self.mongo_client: Optional[Any] = None
         self.mongo_coll: Optional[Collection] = None
 
         if persist:
@@ -77,14 +96,18 @@ class ResidualAgentActor:
                 db = os.getenv("MONGO_DB")
                 coll = os.getenv("MONGO_RESIDUAL_COLLECTION", "residual_memory")
                 if uri and db:
-                    self.mongo_client = MongoClient(uri)
-                    self.mongo_coll = self.mongo_client[db][coll]
-                    logger.info(f"[{self.id}] Connected to MongoDB {db}.{coll}")
-                    # try to load latest snapshot quietly
-                    try:
-                        self._load_latest_from_db()
-                    except Exception:
-                        logger.exception(f"[{self.id}] Failed to load latest snapshot from MongoDB")
+                    self.mongo_client = get_mongo_client(uri)
+                    if self.mongo_client:
+                        self.mongo_coll = self.mongo_client[db][coll]
+                        logger.info(f"[{self.id}] Connected to MongoDB {db}.{coll}")
+                        # try to load latest snapshot quietly
+                        try:
+                            self._load_latest_from_db()
+                        except Exception:
+                            logger.exception(f"[{self.id}] Failed to load latest snapshot from MongoDB")
+                    else:
+                        logger.warning(f"[{self.id}] Mongo connection failed, disabling persistence")
+                        self.persist = False
                 else:
                     logger.warning(f"[{self.id}] Mongo disabled. Missing MONGO_URI or MONGO_DB")
                     self.persist = False
@@ -93,7 +116,19 @@ class ResidualAgentActor:
                 self.persist = False
 
         logger.info(f"[{self.id}] ResidualAgentActor initialized (persist={self.persist})")
+        
+        # Emit initialized event
+        self._emit_event("RESIDUAL_INITIALIZED", {"status": "initialized", "persist": self.persist})
 
+    def _emit_event(self, event_name: str, data: dict = None):
+        """Helper to emit events from this ResidualAgent"""
+        try:
+            from api.events import EventType
+            event_type = getattr(EventType, event_name, None)
+            if event_type:
+                _emit_event_safe(event_type, self.pipeline_id, self.id, "residual", data)
+        except Exception as e:
+            logger.debug(f"[{self.id}] Event emission skipped: {e}")
 
     # registration helpers
 
@@ -124,15 +159,26 @@ class ResidualAgentActor:
         5) broadcast enhanced context to workers
         6) return final snapshot
         """
+        self._emit_event("RESIDUAL_CONTEXT_GENERATING", {"status": "generating"})
+        
         try:
             gc = self._generate_initial_context(metadata, master_plan)
+            self._emit_event("RESIDUAL_CONTEXT_GENERATED", {
+                "context_keys": list(gc.keys())[:10],
+                "status": "generated"
+            })
         except Exception:
             logger.exception(f"[{self.id}] Failed to generate initial context")
             # return current canonical snapshot
             return self.get_snapshot()
 
         # broadcast to submasters (fire and forget)
+        self._emit_event("RESIDUAL_BROADCASTING", {
+            "target": "submasters",
+            "count": len(self.submaster_handles)
+        })
         self._broadcast_to_submasters(gc)
+        self._emit_event("RESIDUAL_BROADCAST_COMPLETE", {"target": "submasters", "status": "complete"})
 
         # wait for submaster task maps
         self._wait_for_submaster_task_maps(wait_for_updates_seconds)
@@ -142,9 +188,18 @@ class ResidualAgentActor:
             updates_copy = list(self.update_history)
 
         enhanced = self._enhance_context_with_updates(metadata, master_plan, updates_copy)
+        self._emit_event("RESIDUAL_CONTEXT_ENHANCED", {
+            "num_updates": len(updates_copy),
+            "status": "enhanced"
+        })
 
         # broadcast to workers
+        self._emit_event("RESIDUAL_BROADCASTING", {
+            "target": "workers",
+            "count": len(self.worker_handles)
+        })
         self._broadcast_to_workers(enhanced)
+        self._emit_event("RESIDUAL_BROADCAST_COMPLETE", {"target": "workers", "status": "complete"})
 
         # persist and return
         if self.persist:
@@ -176,6 +231,14 @@ class ResidualAgentActor:
                 "source": "submaster",
                 "payload": update
             })
+            
+            # Emit update received event
+            self._emit_event("RESIDUAL_UPDATE_RECEIVED", {
+                "source": "submaster",
+                "author": author,
+                "submaster_id": update.get("submaster_id")
+            })
+            
             try:
                 self._merge_submaster_task_map(update)
             except Exception:
@@ -199,6 +262,15 @@ class ResidualAgentActor:
                 "source": "worker",
                 "payload": update
             })
+            
+            # Emit update received event
+            self._emit_event("RESIDUAL_UPDATE_RECEIVED", {
+                "source": "worker",
+                "author": author,
+                "worker_id": update.get("worker_id"),
+                "page": update.get("page")
+            })
+            
             try:
                 self._merge_worker_output(update)
             except Exception:

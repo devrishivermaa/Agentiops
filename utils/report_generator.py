@@ -144,11 +144,29 @@ class PDFReportGenerator:
         self.story.append(Paragraph("Executive Summary", self.styles['SectionHeader']))
         
         total_submasters = len(results)
-        total_pages = sum(r.get('output', {}).get('total_pages', 0) for r in results.values())
-        total_entities = sum(r.get('output', {}).get('total_entities', 0) for r in results.values())
-        total_keywords = sum(r.get('output', {}).get('total_keywords', 0) for r in results.values())
-        total_successes = sum(r.get('output', {}).get('llm_successes', 0) for r in results.values())
-        total_failures = sum(r.get('output', {}).get('llm_failures', 0) for r in results.values())
+        total_pages = 0
+        total_entities = 0
+        total_keywords = 0
+        total_successes = 0
+        total_failures = 0
+        
+        for r in results.values():
+            if r.get('status') != 'ok':
+                continue
+            # Navigate nested structure: result['output']['output']
+            outer = r.get('output', {})
+            inner = outer.get('output', {})
+            
+            total_pages += inner.get('total_pages', 0)
+            
+            # Count entities and keywords from page results
+            for page_result in inner.get('results', []):
+                total_entities += len(page_result.get('entities', []))
+                total_keywords += len(page_result.get('keywords', []))
+                if page_result.get('status') == 'success':
+                    total_successes += 1
+                else:
+                    total_failures += 1
         
         success_rate = (total_successes/(total_successes+total_failures)*100) if (total_successes+total_failures) else 0
         
@@ -196,31 +214,53 @@ class PDFReportGenerator:
             if result.get('status') != 'ok':
                 continue
             
-            output = result.get('output', {})
+            # Navigate nested structure: result['output']['output']
+            outer = result.get('output', {})
+            inner = outer.get('output', {})
+            
             self.story.append(Paragraph(f"SubMaster: {sm_id}", self.styles['SubsectionHeader']))
             
-            role = output.get('role', 'N/A')
-            sections = ', '.join(output.get('assigned_sections', []))
-            page_range = output.get('page_range', [])
+            role = inner.get('role', 'N/A')
+            sections = ', '.join(inner.get('assigned_sections', []))
+            page_range = inner.get('page_range', [])
+            total_pages = inner.get('total_pages', 0)
+            
+            # Calculate totals from page results
+            page_results = inner.get('results', [])
+            total_chars = sum(p.get('char_count', 0) for p in page_results)
+            total_entities = sum(len(p.get('entities', [])) for p in page_results)
+            total_keywords = sum(len(p.get('keywords', [])) for p in page_results)
             
             info_text = f"""
             <b>Role:</b> {role}<br/>
             <b>Sections:</b> {sections}<br/>
             <b>Pages:</b> {page_range}<br/>
-            <b>Total Pages:</b> {output.get('total_pages', 0)}<br/>
-            <b>Characters:</b> {output.get('total_chars', 0)}<br/>
-            <b>Entities:</b> {output.get('total_entities', 0)}<br/>
-            <b>Keywords:</b> {output.get('total_keywords', 0)}
+            <b>Total Pages:</b> {total_pages}<br/>
+            <b>Characters:</b> {total_chars}<br/>
+            <b>Entities:</b> {total_entities}<br/>
+            <b>Keywords:</b> {total_keywords}
             """
             
             self.story.append(Paragraph(info_text, self.styles['BodyText']))
             self.story.append(Spacer(1, 0.2*inch))
             
-            agg = output.get('aggregate_summary', '')
-            if agg and not agg.startswith("No analysis"):
-                self.story.append(Paragraph("<b>Summary:</b>", self.styles['BodyText']))
-                self.story.append(Paragraph(agg, self.styles['BodyText']))
-                self.story.append(Spacer(1, 0.2*inch))
+            # Add page summaries
+            for page_result in page_results[:3]:  # Show first 3 pages
+                page_num = page_result.get('page', 'N/A')
+                section = page_result.get('section', 'N/A')
+                summary = page_result.get('summary', '')
+                if summary and not summary.startswith('['):
+                    self.story.append(Paragraph(f"<b>Page {page_num} ({section}):</b>", self.styles['BodyText']))
+                    # Truncate long summaries
+                    if len(summary) > 500:
+                        summary = summary[:500] + "..."
+                    self.story.append(Paragraph(summary, self.styles['BodyText']))
+                    self.story.append(Spacer(1, 0.1*inch))
+            
+            if len(page_results) > 3:
+                self.story.append(Paragraph(f"<i>... and {len(page_results) - 3} more pages</i>", self.styles['BodyText']))
+            
+            self.story.append(Spacer(1, 0.2*inch))
 
     # ---------------------------------------------------------------------
     # Appendix
@@ -236,7 +276,11 @@ class PDFReportGenerator:
             if r.get('status') != 'ok': 
                 continue
             
-            for p in r.get('output', {}).get('results', []):
+            # Navigate nested structure: result['output']['output']['results']
+            outer = r.get('output', {})
+            inner = outer.get('output', {})
+            
+            for p in inner.get('results', []):
                 all_entities.update(p.get('entities', []))
                 all_keywords.update(p.get('keywords', []))
         

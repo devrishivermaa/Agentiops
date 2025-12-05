@@ -1,0 +1,5 @@
+{
+  "name": "AgentOps Dashboard",
+  "description": "Real-time AI agent orchestration visualization dashboard with WebSocket integration.",
+  "requestFramePermissions": []
+}

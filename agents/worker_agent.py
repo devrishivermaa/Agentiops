@@ -5,6 +5,7 @@ WorkerAgent for ResidualAgent Option B.
 Supports:
 1. Receiving global context from ResidualAgent/SubMaster
 2. Using global context in page-level LLM analysis
+3. Emitting events through API EventBus
 """
 
 import os
@@ -18,15 +19,35 @@ from utils.llm_helper import LLMProcessor, analyze_page
 logger = get_logger("WorkerAgent")
 
 
+def _emit_event_safe(event_type, pipeline_id, agent_id, agent_type, data=None):
+    """Safely emit events - works from within Ray actors via HTTP"""
+    try:
+        from api.event_emitter import emit_event_safe
+        # event_type can be EventType enum or string
+        event_type_str = event_type.value if hasattr(event_type, 'value') else str(event_type)
+        emit_event_safe(
+            event_type=event_type_str,
+            pipeline_id=pipeline_id,
+            agent_id=agent_id,
+            agent_type=agent_type,
+            data=data,
+        )
+    except Exception as e:
+        logger.debug(f"Event emission skipped: {e}")
+
+
 @ray.remote
 class WorkerAgent:
 
-    def __init__(self, worker_id: str, llm_model: str = None, processing_requirements: list = None):
+    def __init__(self, worker_id: str, llm_model: str = None, processing_requirements: list = None,
+                 pipeline_id: str = None, submaster_id: str = None):
         self.worker_id = worker_id
         self.llm_model = llm_model or os.getenv("LLM_MODEL", "mistral-small-latest")
         self.processing_requirements = processing_requirements or []
         self.llm_processor = None
         self.global_context = {}
+        self.pipeline_id = pipeline_id or "unknown"
+        self.submaster_id = submaster_id or "unknown"
 
         # -------------------------------------------------
         # Worker-level memory cache (LRU style)
@@ -36,6 +57,20 @@ class WorkerAgent:
         self.cache_max_items = 500   # Before eviction
 
         logger.info(f"[{worker_id}] WorkerAgent initialized | model={self.llm_model}")
+        
+        # Emit spawned event
+        self._emit_event("WORKER_SPAWNED", {"status": "spawned"})
+
+    def _emit_event(self, event_name: str, data: dict = None):
+        """Helper to emit events from this Worker"""
+        try:
+            from api.events import EventType
+            event_type = getattr(EventType, event_name, None)
+            if event_type:
+                event_data = {"submaster_id": self.submaster_id, **(data or {})}
+                _emit_event_safe(event_type, self.pipeline_id, self.worker_id, "worker", event_data)
+        except Exception as e:
+            logger.debug(f"[{self.worker_id}] Event emission skipped: {e}")
 
     # ----------------------------------------------------------
     # Receive global context → reset cache (context changes output)
@@ -45,6 +80,11 @@ class WorkerAgent:
         self.cache.clear()           # invalidate old context-based cache
         self.cache_access.clear()
         logger.info(f"[{self.worker_id}] Global context received. Cache cleared.")
+        
+        self._emit_event("WORKER_CONTEXT_RECEIVED", {
+            "num_context_keys": len(self.global_context.keys())
+        })
+        
         return {"worker_id": self.worker_id, "status": "context_received"}
 
     # ----------------------------------------------------------
@@ -58,10 +98,14 @@ class WorkerAgent:
                 caller_id=self.worker_id
             )
             logger.info(f"[{self.worker_id}] LLM processor initialized")
+            
+            self._emit_event("WORKER_INITIALIZED", {"status": "ready"})
+            
             return {"worker_id": self.worker_id, "status": "ready"}
 
         except Exception as e:
             logger.error(f"[{self.worker_id}] LLM initialization failed: {e}")
+            self._emit_event("WORKER_FAILED", {"error": str(e), "status": "init_failed"})
             return {"worker_id": self.worker_id, "status": "error", "error": str(e)}
 
     # ----------------------------------------------------------
@@ -100,6 +144,13 @@ class WorkerAgent:
                      section_name: Optional[str] = None) -> Dict[str, Any]:
 
         start_time = time.time()
+        
+        # Emit page started event
+        self._emit_event("WORKER_PAGE_STARTED", {
+            "page": page_num,
+            "section": section_name or "Unknown",
+            "status": "processing"
+        })
 
         # ------------------------------
         # 1) Build result base
@@ -127,6 +178,12 @@ class WorkerAgent:
             logger.info(f"[{self.worker_id}] Cache HIT for page {page_num}")
             cached["from_cache"] = True
             cached["processing_time"] = time.time() - start_time
+            
+            self._emit_event("WORKER_PAGE_COMPLETED", {
+                "page": page_num,
+                "from_cache": True,
+                "status": "completed"
+            })
             return cached
 
         logger.info(f"[{self.worker_id}] Cache MISS for page {page_num}")
@@ -141,6 +198,7 @@ class WorkerAgent:
                 "keywords": [],
                 "status": "error"
             })
+            self._emit_event("WORKER_FAILED", {"page": page_num, "error": "LLM not available"})
             return result
 
         if len(text.strip()) < 30:
@@ -150,12 +208,22 @@ class WorkerAgent:
                 "keywords": [],
                 "status": "skipped"
             })
+            self._emit_event("WORKER_PAGE_COMPLETED", {
+                "page": page_num,
+                "from_cache": False,
+                "status": "skipped"
+            })
             return result
 
         # ------------------------------
         # 5) Real LLM Analysis
         # ------------------------------
         try:
+            self._emit_event("WORKER_PROCESSING", {
+                "page": page_num,
+                "status": "analyzing"
+            })
+            
             analysis = analyze_page(
                 llm_processor=self.llm_processor,
                 role=role,
@@ -178,6 +246,7 @@ class WorkerAgent:
                 "llm_error": str(e),
                 "status": "error"
             })
+            self._emit_event("WORKER_FAILED", {"page": page_num, "error": str(e)})
 
         # ------------------------------
         # 6) Save to cache
@@ -188,4 +257,13 @@ class WorkerAgent:
 
         result["from_cache"] = False
         result["processing_time"] = time.time() - start_time
+        
+        # Emit page completed event
+        self._emit_event("WORKER_PAGE_COMPLETED", {
+            "page": page_num,
+            "from_cache": False,
+            "processing_time": result["processing_time"],
+            "status": "completed"
+        })
+        
         return result

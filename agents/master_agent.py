@@ -1,28 +1,48 @@
 # agents/master_agent.py
 """
 MasterAgent with integrated rate limiting and retry logic.
+Emits events through API EventBus for real-time visualization.
 """
 
 import os
 import json
 import uuid
 import re
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 from utils.logger import get_logger
 from utils.llm_helper import LLMProcessor 
-from pymongo import MongoClient
+from utils.mongo_helper import get_mongo_client
 import time
 
 load_dotenv()
 logger = get_logger("MasterAgent")
 
+
+def _emit_event_safe(event_type_name, pipeline_id, agent_id, data=None):
+    """Safely emit events from MasterAgent"""
+    try:
+        from api.events import event_bus, EventType
+        event_type = getattr(EventType, event_type_name, None)
+        if event_type:
+            event_bus.emit_simple(
+                event_type,
+                pipeline_id,
+                data or {},
+                agent_id=agent_id,
+                agent_type="master",
+            )
+    except Exception as e:
+        logger.debug(f"Event emission skipped: {e}")
+
+
 class MasterAgent:
     """MasterAgent generates SubMaster execution plans with user feedback."""
     
-    def __init__(self, model=None, temperature=0.3):
+    def __init__(self, model=None, temperature=0.3, pipeline_id: str = None):
         self.id = f"MA-{uuid.uuid4().hex[:6].upper()}"
         self.logger = logger
+        self.pipeline_id = pipeline_id or "unknown"
         
         model = model or os.getenv("LLM_MODEL", "mistral-small-latest")
         
@@ -44,22 +64,32 @@ class MasterAgent:
             coll_name = os.getenv("MONGO_MASTER_COLLECTION", "master_agent")
             metadata_coll_name = os.getenv("MONGO_METADATA_COLLECTION", "metadata")
 
-            if uri:
-                self.mongo_client = MongoClient(uri)
-                # if db_name is None this will raise; leaving behavior unchanged
-                self.mongo_db = self.mongo_client[db_name]
-                self.mongo_coll = self.mongo_db[coll_name]
-                self.mongo_metadata_coll = self.mongo_db[metadata_coll_name]
-                
-                self.logger.info(f"[INIT] Connected to MongoDB collection {db_name}.{coll_name}")
-                self.logger.info(f"[INIT] Connected extra metadata collection {db_name}.{metadata_coll_name}")
+            if uri and db_name:
+                self.mongo_client = get_mongo_client(uri)
+                if self.mongo_client:
+                    self.mongo_db = self.mongo_client[db_name]
+                    self.mongo_coll = self.mongo_db[coll_name]
+                    self.mongo_metadata_coll = self.mongo_db[metadata_coll_name]
+                    
+                    self.logger.info(f"[INIT] Connected to MongoDB collection {db_name}.{coll_name}")
+                    self.logger.info(f"[INIT] Connected extra metadata collection {db_name}.{metadata_coll_name}")
+                else:
+                    self.logger.warning("[INIT] MongoDB connection failed. Continuing without persistence.")
             else:
-                self.logger.warning("[INIT] MONGO_URI is missing. MongoDB disabled.")
+                self.logger.warning("[INIT] MONGO_URI or MONGO_DB is missing. MongoDB disabled.")
 
         except Exception as e:
             self.logger.error(f"[INIT] Failed to connect MongoDB: {e}")
         
         self.logger.info(f"[INIT] Master Agent {self.id} initialized with model {model}.")
+    
+    def _emit_event(self, event_name: str, data: dict = None):
+        """Helper to emit events from MasterAgent"""
+        _emit_event_safe(event_name, self.pipeline_id, self.id, data)
+    
+    def set_pipeline_id(self, pipeline_id: str):
+        """Set pipeline ID for event tracking"""
+        self.pipeline_id = pipeline_id
     
     def extract_json(self, text: str) -> dict:
         text = text.strip()
@@ -191,9 +221,17 @@ Respond ONLY in valid JSON:
     def feedback_loop(self, metadata: dict):
         self.logger.info("[START] Entering feedback loop...")
         
+        # Update pipeline_id from metadata if available
+        if metadata.get("pipeline_id"):
+            self.pipeline_id = metadata["pipeline_id"]
+        
         goal = metadata.get("user_notes", "Process the document according to standard workflow.")
         
         print("\nGenerating SubMaster execution plan...")
+        self._emit_event("MASTER_PLAN_GENERATING", {
+            "status": "generating",
+            "document": metadata.get("file_name")
+        })
         
         try:
             plan = self.ask_llm_for_plan(goal, metadata)
@@ -235,15 +273,36 @@ Generate corrected plan.
             print("\nProposed SubMaster Plan:\n")
             print(json.dumps(plan, indent=2))
             
+            # Emit plan generated event
+            self._emit_event("MASTER_PLAN_GENERATED", {
+                "status": "generated",
+                "num_submasters": plan.get("num_submasters", 0),
+                "plan_summary": plan.get("distribution_strategy", "")[:200]
+            })
+            
             if not metadata.get("feedback_required", True):
                 print("\nAuto approving plan")
                 plan["status"] = "approved"
+                self._emit_event("MASTER_PLAN_APPROVED", {
+                    "status": "approved",
+                    "auto_approved": True
+                })
                 return plan
+            
+            # Emit awaiting feedback event
+            self._emit_event("MASTER_AWAITING_FEEDBACK", {
+                "status": "awaiting_feedback",
+                "plan": plan
+            })
             
             approval = input("\nApprove this plan? (yes/no): ").strip().lower()
             if approval in ["yes", "y"]:
                 self.logger.info("User approved the plan.")
                 plan["status"] = "approved"
+                self._emit_event("MASTER_PLAN_APPROVED", {
+                    "status": "approved",
+                    "auto_approved": False
+                })
                 return plan
             
             feedback = input("\nWhat would you like to change?\n> ").strip()
@@ -317,9 +376,29 @@ Revise the plan. Keep JSON structure unchanged.
             self.logger.error(f"[MONGO] Failed to save metadata: {e}")
 
     # ----------------------------------------------------
-    # FIXED FUNCTION: always saves plan (except None)
+    # API-friendly execute: accepts intent/context as params
+    # NO terminal input - auto-approves after validation
     # ----------------------------------------------------
-    def execute(self, metadata_path: str, save_path: str = None):
+    def execute_api(
+        self, 
+        metadata_path: str, 
+        high_level_intent: str = None,
+        user_document_context: str = None,
+        save_path: str = None
+    ):
+        """
+        API-friendly execution method that doesn't require terminal input.
+        Auto-approves the plan after validation (no terminal prompt).
+        
+        Args:
+            metadata_path: Path to the metadata JSON file
+            high_level_intent: User's intent (e.g., "Summarize for presentation")
+            user_document_context: Additional context about the document
+            save_path: Optional path to save the plan
+            
+        Returns:
+            Plan dictionary or None on failure
+        """
         try:
             with open(metadata_path, "r", encoding="utf8") as f:
                 metadata = json.load(f)
@@ -327,7 +406,176 @@ Revise the plan. Keep JSON structure unchanged.
             self.logger.error(f"Failed to load metadata: {e}")
             return None
 
-        # Prompt user for high level intent and document context and merge into metadata
+        # Enrich metadata with provided intent and context
+        try:
+            if high_level_intent:
+                metadata["high_level_intent"] = high_level_intent
+            else:
+                # Default intent based on document type
+                doc_type = metadata.get("document_type", "document")
+                metadata["high_level_intent"] = f"Analyze and summarize this {doc_type}"
+
+            if user_document_context:
+                metadata["user_document_context"] = user_document_context
+
+            metadata["metadata_updated_at"] = time.time()
+            metadata["execution_mode"] = "api"
+            # CRITICAL: Set feedback_required to False so feedback_loop auto-approves
+            metadata["feedback_required"] = False
+
+            # Save enriched metadata back to disk
+            try:
+                with open(metadata_path, "w", encoding="utf8") as f:
+                    json.dump(metadata, f, indent=2)
+                self.logger.info(f"Enriched metadata written to {metadata_path}")
+            except Exception as e:
+                self.logger.error(f"Failed to write enriched metadata to disk: {e}")
+
+            # Save metadata to mongo
+            try:
+                self.save_metadata_to_mongo(metadata)
+            except Exception as e:
+                self.logger.error(f"Failed to save metadata to MongoDB: {e}")
+
+        except Exception as e:
+            self.logger.error(f"Failed to enrich metadata: {e}")
+
+        return self._execute_plan_generation(metadata, metadata_path, save_path)
+    
+    # ----------------------------------------------------
+    # Generate plan ONLY - no approval, for 2-step API flow
+    # Step 1: generate_plan_only → returns plan for review
+    # Step 2: (after user approval) continue with approved plan
+    # ----------------------------------------------------
+    def generate_plan_only(
+        self,
+        metadata_path: str,
+        high_level_intent: str = None,
+        user_document_context: str = None,
+        save_path: str = None
+    ):
+        """
+        Generate a plan WITHOUT approval step.
+        Used for 2-step API flow where user reviews plan before approval.
+        
+        Args:
+            metadata_path: Path to the metadata JSON file
+            high_level_intent: User's intent
+            user_document_context: Additional context
+            save_path: Optional path to save the plan
+            
+        Returns:
+            Plan dictionary (not approved yet) or None on failure
+        """
+        try:
+            with open(metadata_path, "r", encoding="utf8") as f:
+                metadata = json.load(f)
+        except Exception as e:
+            self.logger.error(f"Failed to load metadata: {e}")
+            return None
+
+        # Enrich metadata
+        if high_level_intent:
+            metadata["high_level_intent"] = high_level_intent
+        else:
+            doc_type = metadata.get("document_type", "document")
+            metadata["high_level_intent"] = f"Analyze and summarize this {doc_type}"
+
+        if user_document_context:
+            metadata["user_document_context"] = user_document_context
+
+        metadata["metadata_updated_at"] = time.time()
+        metadata["execution_mode"] = "api"
+
+        # Save enriched metadata
+        try:
+            with open(metadata_path, "w", encoding="utf8") as f:
+                json.dump(metadata, f, indent=2)
+        except Exception as e:
+            self.logger.error(f"Failed to write metadata: {e}")
+
+        try:
+            self.save_metadata_to_mongo(metadata)
+        except Exception as e:
+            self.logger.error(f"Failed to save metadata to MongoDB: {e}")
+
+        # Generate plan using LLM
+        goal = metadata.get("high_level_intent", "Analyze and summarize the document")
+        if metadata.get("user_document_context"):
+            goal += f"\n\nDocument Context: {metadata['user_document_context']}"
+
+        try:
+            plan = self.ask_llm_for_plan(goal, metadata)
+        except RuntimeError as e:
+            self.logger.error(f"LLM call failed: {e}")
+            return {"status": "error", "error": str(e)}
+
+        # Validate plan (with auto-fix attempts)
+        max_attempts = 5
+        attempts = 0
+        
+        while attempts < max_attempts:
+            attempts += 1
+            validation = self.validate_plan(plan, metadata)
+            
+            if validation["valid"]:
+                break
+                
+            self.logger.warning(f"Plan validation errors (attempt {attempts}): {validation['errors']}")
+            
+            if attempts >= max_attempts:
+                return {"status": "validation_failed", "errors": validation["errors"]}
+            
+            # Try to fix the plan
+            fix_prompt = f"""
+Previous plan had errors:
+{chr(10).join(f"- {e}" for e in validation["errors"])}
+
+PDF has {metadata.get('num_pages')} pages. All ranges must be valid.
+Generate corrected plan.
+"""
+            try:
+                plan = self.ask_llm_for_plan(goal + "\n\n" + fix_prompt, metadata)
+            except RuntimeError as e:
+                return {"status": "error", "error": str(e)}
+
+        # Mark as pending approval (not approved yet)
+        plan["status"] = "pending_approval"
+
+        # Save plan
+        if save_path is None:
+            save_path = os.path.join(os.path.dirname(metadata_path), "submasters_plan.json")
+
+        try:
+            with open(save_path, "w", encoding="utf8") as f:
+                json.dump(plan, f, indent=2)
+            self.logger.info(f"Plan saved to: {save_path}")
+        except Exception as e:
+            self.logger.error(f"Failed to save plan: {e}")
+
+        try:
+            self.save_plan_to_mongo(plan, metadata)
+        except Exception as e:
+            self.logger.error(f"MongoDB save failed: {e}")
+
+        return plan
+
+    # ----------------------------------------------------
+    # CLI execute: prompts for input (original behavior)
+    # ----------------------------------------------------
+    def execute(self, metadata_path: str, save_path: str = None):
+        """
+        CLI execution method that prompts for user input.
+        For API usage, use execute_api() instead.
+        """
+        try:
+            with open(metadata_path, "r", encoding="utf8") as f:
+                metadata = json.load(f)
+        except Exception as e:
+            self.logger.error(f"Failed to load metadata: {e}")
+            return None
+
+        # Prompt user for high level intent and document context
         try:
             print("\nPlease provide a brief high level intent for this document (example: 'Summarize for a presentation'):")
             high_level_intent = input("> ").strip()
@@ -339,10 +587,10 @@ Revise the plan. Keep JSON structure unchanged.
             if user_doc_context:
                 metadata["user_document_context"] = user_doc_context
 
-            # Add a metadata update timestamp
             metadata["metadata_updated_at"] = time.time()
+            metadata["execution_mode"] = "cli"
 
-            # Save enriched metadata back to disk and to Mongo
+            # Save enriched metadata back to disk
             try:
                 with open(metadata_path, "w", encoding="utf8") as f:
                     json.dump(metadata, f, indent=2)
@@ -359,6 +607,13 @@ Revise the plan. Keep JSON structure unchanged.
         except Exception as e:
             self.logger.error(f"Failed to enrich metadata with user inputs: {e}")
 
+        return self._execute_plan_generation(metadata, metadata_path, save_path)
+
+    # ----------------------------------------------------
+    # Core plan generation logic (shared by both methods)
+    # ----------------------------------------------------
+    def _execute_plan_generation(self, metadata: dict, metadata_path: str, save_path: str = None):
+        """Core plan generation logic shared by CLI and API execution."""
         self.logger.info(f"[EXEC] Processing: {metadata.get('file_name')}")
         plan = self.feedback_loop(metadata)
 
