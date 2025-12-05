@@ -155,36 +155,27 @@ class MasterMergerAgent:
         global_context: Dict[str, Any],
         processing_plan: Dict[str, Any]
     ) -> str:
-        """Generate high-level executive summary."""
+        """Generate high-level executive summary - OPTIMIZED for speed."""
         
-        prompt = f"""
-You are creating an executive summary for a comprehensive document analysis.
+        # OPTIMIZATION: Limit context size to reduce tokens
+        context_str = json.dumps(global_context, indent=2)[:1500]  # Limit context
+        
+        prompt = f"""Create an executive summary (300-400 words) for this document analysis.
 
-**GLOBAL CONTEXT:**
-{json.dumps(global_context, indent=2)}
+CONTEXT:
+{context_str}
 
-**OVERALL DOCUMENT SUMMARY:**
-{reducer_results.get('final_summary', '')[:1000]}
+SUMMARY: {reducer_results.get('final_summary', '')[:800]}
 
-**KEY THEMES:**
-{global_context.get('cross_document_themes', [])}
+THEMES: {global_context.get('cross_document_themes', [])[:5]}
 
-**TOP ENTITIES:**
-{list(dict(sorted(reducer_results.get('entities', {}).items(), key=lambda x: x[1], reverse=True)[:10]).keys())}
+ENTITIES: {list(dict(sorted(reducer_results.get('entities', {}).items(), key=lambda x: x[1], reverse=True)[:8]).keys())}
 
-**TASK:**
-Create a comprehensive executive summary (500-800 words) that:
-1. Provides high-level overview of the entire document
-2. Highlights main themes and findings
-3. Identifies key entities and their roles
-4. Emphasizes technical significance
-5. Notes important patterns and trends
-
-Write in professional, clear prose. Be specific and informative. Include all important details.
+Write a professional summary covering: overview, main themes, key entities, technical significance, and patterns.
 """
         
         try:
-            summary = self.llm.call_with_retry(prompt, parse_json=False, max_tokens=8192)
+            summary = self.llm.call_with_retry(prompt, parse_json=False, max_tokens=2048)
             return summary.strip()
         except Exception as e:
             logger.error(f"[{self.agent_id}] Failed to create executive summary: {e}")
@@ -196,7 +187,7 @@ Write in professional, clear prose. Be specific and informative. Include all imp
         global_context: Dict[str, Any],
         processing_plan: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Create detailed section-by-section synthesis."""
+        """Create detailed section-by-section synthesis - OPTIMIZED for speed."""
         
         synthesis = {
             "sections": [],
@@ -204,22 +195,112 @@ Write in professional, clear prose. Be specific and informative. Include all imp
             "technical_deep_dive": ""
         }
         
-        # Process each RSM output
-        for rsm in rsm_outputs:
-            section = self._synthesize_section(rsm, global_context, processing_plan)
-            synthesis["sections"].append(section)
+        # OPTIMIZATION: Process sections in batches of 3 with combined prompts
+        # Instead of individual LLM calls per section
+        BATCH_SIZE = 3
+        for i in range(0, len(rsm_outputs), BATCH_SIZE):
+            batch = rsm_outputs[i:i + BATCH_SIZE]
+            batch_sections = self._synthesize_sections_batch(batch, global_context, processing_plan)
+            synthesis["sections"].extend(batch_sections)
+            
+            # Small delay between batches
+            if i + BATCH_SIZE < len(rsm_outputs):
+                time.sleep(2)
         
-        # Create cross-section analysis
-        synthesis["cross_section_analysis"] = self._create_cross_section_analysis(
-            rsm_outputs, global_context
-        )
+        # Create cross-section analysis (only if we have sections)
+        if synthesis["sections"]:
+            synthesis["cross_section_analysis"] = self._create_cross_section_analysis(
+                rsm_outputs, global_context
+            )
         
-        # Create technical deep dive
-        synthesis["technical_deep_dive"] = self._create_technical_deep_dive(
-            rsm_outputs, global_context
-        )
+        # SKIP technical deep dive if already have enough content
+        # This saves an expensive LLM call
+        if len(synthesis["sections"]) > 3:
+            synthesis["technical_deep_dive"] = self._create_technical_deep_dive_lite(
+                rsm_outputs, global_context
+            )
+        else:
+            synthesis["technical_deep_dive"] = self._create_technical_deep_dive(
+                rsm_outputs, global_context
+            )
         
         return synthesis
+
+    def _synthesize_sections_batch(
+        self,
+        rsm_batch: List[Dict[str, Any]],
+        global_context: Dict[str, Any],
+        processing_plan: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Synthesize multiple RSM outputs in a single LLM call."""
+        
+        # Build combined prompt for all sections in batch
+        sections_text = []
+        for rsm in rsm_batch:
+            rsm_id = rsm.get("rsm_id", "Unknown")
+            output = rsm.get("output", {})
+            sections_text.append(f"""
+--- SECTION {rsm_id} ---
+Summary: {output.get('enhanced_summary', '')[:500]}
+Key Points: {output.get('key_points', [])[:3]}
+Top Entities: {list(dict(sorted(output.get('entities', {}).items(), key=lambda x: x[1], reverse=True)[:5]).keys())}
+""")
+        
+        prompt = f"""Synthesize these document sections concisely.
+
+{chr(10).join(sections_text)}
+
+Global Themes: {global_context.get('cross_document_themes', [])[:3]}
+
+For EACH section, provide a 100-150 word synthesis focusing on main content and key findings.
+
+Output format (JSON array):
+[
+  {{"section_id": "RSM-001", "synthesis": "...", "key_entities": ["entity1", "entity2"]}},
+  ...
+]
+"""
+        
+        try:
+            response = self.llm.call_with_retry(prompt, parse_json=True, max_tokens=2048)
+            if isinstance(response, list):
+                return response
+        except Exception as e:
+            logger.warning(f"[{self.agent_id}] Batch synthesis failed, using fallback: {e}")
+        
+        # Fallback: create minimal sections without LLM
+        sections = []
+        for rsm in rsm_batch:
+            rsm_id = rsm.get("rsm_id", "Unknown")
+            output = rsm.get("output", {})
+            sections.append({
+                "section_id": rsm_id,
+                "synthesis": output.get('enhanced_summary', '')[:300],
+                "key_entities": list(dict(sorted(output.get('entities', {}).items(), key=lambda x: x[1], reverse=True)[:5]).keys())
+            })
+        return sections
+
+    def _create_technical_deep_dive_lite(
+        self,
+        rsm_outputs: List[Dict[str, Any]],
+        global_context: Dict[str, Any]
+    ) -> str:
+        """Lightweight technical summary without LLM call."""
+        # Extract key technical terms from all sections
+        all_tech_terms = {}
+        for rsm in rsm_outputs:
+            output = rsm.get("output", {})
+            for term, count in output.get("technical_terms", {}).items():
+                all_tech_terms[term] = all_tech_terms.get(term, 0) + count
+        
+        top_terms = sorted(all_tech_terms.items(), key=lambda x: x[1], reverse=True)[:15]
+        
+        return f"""Technical Overview:
+This document covers {len(rsm_outputs)} major sections with the following key technical concepts:
+{', '.join([f"{term} ({count})" for term, count in top_terms[:10]])}.
+
+Primary technical focus areas identified across the document include {', '.join([t[0] for t in top_terms[:5]])}.
+"""
 
     def _synthesize_section(
         self,
@@ -265,7 +346,7 @@ Be specific, detailed, and technically accurate. Include all relevant informatio
 """
         
         try:
-            section_text = self.llm.call_with_retry(prompt, parse_json=False, max_tokens=8192)
+            section_text = self.llm.call_with_retry(prompt, parse_json=False, max_tokens=2048)
             
             return {
                 "section_id": rsm_id,
@@ -302,33 +383,19 @@ Be specific, detailed, and technically accurate. Include all relevant informatio
             for entity, count in output.get("entities", {}).items():
                 all_entities[entity] = all_entities.get(entity, 0) + count
         
-        top_entities = dict(sorted(all_entities.items(), key=lambda x: x[1], reverse=True)[:15])
+        top_entities = dict(sorted(all_entities.items(), key=lambda x: x[1], reverse=True)[:10])
         
-        prompt = f"""
-Analyze cross-cutting patterns across multiple document sections.
+        prompt = f"""Analyze cross-cutting patterns across document sections (200-300 words).
 
-**GLOBAL THEMES:**
-{global_context.get('cross_document_themes', [])}
+Themes: {global_context.get('cross_document_themes', [])[:5]}
+Key Entities: {list(top_entities.keys())[:8]}
+Common Topics: {list(set(all_themes))[:10]}
 
-**RECURRING ENTITIES:**
-{list(top_entities.keys())}
-
-**COMMON THEMES:**
-{list(set(all_themes))[:20]}
-
-**TASK:**
-Create a cross-section analysis (400-600 words) that:
-1. Identifies patterns appearing across multiple sections
-2. Analyzes relationships between key entities
-3. Notes evolution of themes throughout document
-4. Highlights significant connections and dependencies
-5. Synthesizes overarching narrative
-
-Focus on connections and relationships rather than individual sections. Be comprehensive.
+Focus on: patterns across sections, entity relationships, theme evolution, and key connections.
 """
         
         try:
-            analysis = self.llm.call_with_retry(prompt, parse_json=False, max_tokens=8192)
+            analysis = self.llm.call_with_retry(prompt, parse_json=False, max_tokens=1500)
             return analysis.strip()
         except Exception as e:
             logger.error(f"[{self.agent_id}] Failed cross-section analysis: {e}")
@@ -339,7 +406,7 @@ Focus on connections and relationships rather than individual sections. Be compr
         rsm_outputs: List[Dict[str, Any]],
         global_context: Dict[str, Any]
     ) -> str:
-        """Create technical deep dive into key concepts."""
+        """Create technical deep dive into key concepts - OPTIMIZED."""
         
         all_technical_terms = {}
         for rsm in rsm_outputs:
@@ -347,30 +414,18 @@ Focus on connections and relationships rather than individual sections. Be compr
             for term, count in output.get("technical_terms", {}).items():
                 all_technical_terms[term] = all_technical_terms.get(term, 0) + count
         
-        top_technical = dict(sorted(all_technical_terms.items(), key=lambda x: x[1], reverse=True)[:20])
+        top_technical = dict(sorted(all_technical_terms.items(), key=lambda x: x[1], reverse=True)[:12])
         
-        prompt = f"""
-Create a technical deep dive into key concepts from this document.
+        prompt = f"""Technical deep dive (200-300 words) on key concepts.
 
-**TECHNICAL CONCEPTS:**
-{global_context.get('technical_concepts', [])}
+Technical Concepts: {global_context.get('technical_concepts', [])[:5]}
+Top Terms: {list(top_technical.keys())}
 
-**MOST FREQUENT TECHNICAL TERMS:**
-{list(top_technical.keys())}
-
-**TASK:**
-Write a technical analysis (500-800 words) that:
-1. Explains key technical concepts in detail
-2. Describes methodologies and approaches
-3. Analyzes technical relationships and dependencies
-4. Notes technical innovations or novel approaches
-5. Provides context for technical significance
-
-Write for a technical audience with domain expertise. Be thorough and detailed.
+Cover: key concepts, methodologies, technical relationships, and significance.
 """
         
         try:
-            deep_dive = self.llm.call_with_retry(prompt, parse_json=False, max_tokens=8192)
+            deep_dive = self.llm.call_with_retry(prompt, parse_json=False, max_tokens=1500)
             return deep_dive.strip()
         except Exception as e:
             logger.error(f"[{self.agent_id}] Failed technical deep dive: {e}")
@@ -381,18 +436,19 @@ Write for a technical audience with domain expertise. Be thorough and detailed.
         reducer_results: Dict[str, Any],
         global_context: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Extract and organize comprehensive metadata."""
+        """Extract and organize comprehensive metadata - OPTIMIZED (no LLM call)."""
         
         entities = reducer_results.get("entities", {})
         keywords = reducer_results.get("keywords", {})
         technical_terms = reducer_results.get("technical_terms", {})
         
+        # OPTIMIZATION: Limit to top 15 instead of 30
         return {
-            "top_entities": dict(sorted(entities.items(), key=lambda x: x[1], reverse=True)[:30]),
-            "top_keywords": dict(sorted(keywords.items(), key=lambda x: x[1], reverse=True)[:30]),
-            "top_technical_terms": dict(sorted(technical_terms.items(), key=lambda x: x[1], reverse=True)[:30]),
-            "document_themes": global_context.get("cross_document_themes", []),
-            "technical_concepts": global_context.get("technical_concepts", []),
+            "top_entities": dict(sorted(entities.items(), key=lambda x: x[1], reverse=True)[:15]),
+            "top_keywords": dict(sorted(keywords.items(), key=lambda x: x[1], reverse=True)[:15]),
+            "top_technical_terms": dict(sorted(technical_terms.items(), key=lambda x: x[1], reverse=True)[:15]),
+            "document_themes": global_context.get("cross_document_themes", [])[:5],
+            "technical_concepts": global_context.get("technical_concepts", [])[:5],
             "total_unique_entities": len(entities),
             "total_unique_keywords": len(keywords),
             "total_unique_technical_terms": len(technical_terms)
@@ -404,46 +460,34 @@ Write for a technical audience with domain expertise. Be thorough and detailed.
         global_context: Dict[str, Any],
         processing_plan: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Generate final insights and conclusions."""
+        """Generate final insights and conclusions - OPTIMIZED."""
         
-        all_insights = reducer_results.get("insights", [])
-        key_points = reducer_results.get("key_points", [])
+        all_insights = reducer_results.get("insights", [])[:20]  # Limit input
+        key_points = reducer_results.get("key_points", [])[:20]  # Limit input
         
-        prompt = f"""
-Generate final insights and conclusions for this document analysis.
+        prompt = f"""Generate insights and conclusions (JSON format).
 
-**ALL INSIGHTS:**
-{all_insights[:50]}
+Insights: {all_insights[:15]}
+Key Points: {key_points[:15]}
+Themes: {global_context.get('cross_document_themes', [])[:3]}
 
-**KEY POINTS:**
-{key_points[:50]}
-
-**GLOBAL THEMES:**
-{global_context.get('cross_document_themes', [])}
-
-**PROCESSING STRATEGY:**
-{processing_plan.get('synthesis_strategy', '')}
-
-**TASK:**
-Return a JSON object with:
+Return JSON:
 {{
-  "key_findings": ["finding1", "finding2", ...],  // 10-15 most important findings with details
-  "conclusions": "Comprehensive conclusion paragraph (300-500 words) that summarizes all key points",
-  "implications": ["implication1", "implication2", ...],  // 5-8 broader implications
-  "recommendations": ["rec1", "rec2", ...],  // 5-8 recommendations if applicable
-  "future_directions": ["direction1", "direction2", ...]  // 3-5 potential future work areas
+  "key_findings": ["..."],  // 5-7 findings
+  "conclusions": "150-200 word conclusion",
+  "implications": ["..."],  // 3-4 implications
+  "recommendations": ["..."],  // 3-4 recommendations
+  "future_directions": ["..."]  // 2-3 directions
 }}
-
-Be thorough and comprehensive in each section.
 """
         
         try:
-            result = self.llm.call_with_retry(prompt, parse_json=True, max_tokens=8192)
+            result = self.llm.call_with_retry(prompt, parse_json=True, max_tokens=1500)
             return result
         except Exception as e:
             logger.error(f"[{self.agent_id}] Failed to generate insights: {e}")
             return {
-                "key_findings": key_points[:10],
+                "key_findings": key_points[:5],
                 "conclusions": "Analysis complete.",
                 "implications": [],
                 "recommendations": [],

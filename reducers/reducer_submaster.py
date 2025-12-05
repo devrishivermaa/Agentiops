@@ -412,24 +412,17 @@ def run_reducer_global(metadata: Dict[str, Any] = None, mapper_workers_override:
     N = len(mapper_docs)
     logger.info(f"Loaded {N} mapper submaster docs from {mapper_coll_name}")
 
-    # Group into pairs
-    groups = group_mapper_docs(mapper_docs, group_size=2)
+    # OPTIMIZATION: Group into larger groups (4 instead of 2) to reduce RSM count
+    # This significantly reduces rate limiting and speeds up processing
+    GROUP_SIZE = 4  # Was 2, now 4 to halve the number of RSMs
+    groups = group_mapper_docs(mapper_docs, group_size=GROUP_SIZE)
     R = len(groups)
-    logger.info(f"Creating {R} reducer submasters (groups of up to 2)")
+    logger.info(f"Creating {R} reducer submasters (groups of up to {GROUP_SIZE})")
 
-    # Determine mapper workers per submaster by inspecting first mapper doc or fallback
-    first_mapper = mapper_docs[0]
-    mapper_workers = (
-        mapper_workers_override
-        or first_mapper.get("metadata", {}).get("num_workers_per_submaster")
-        or first_mapper.get("num_workers_per_submaster")
-        or int(os.getenv("DEFAULT_MAPPER_WORKERS", 3))
-    )
-    logger.info(f"Assumed mapper workers per submaster = {mapper_workers}")
-
-    # reducer workers per rsm is ceil(mapper_workers / 2)
-    reducer_workers_per_rsm = math.ceil(int(mapper_workers) / 2)
-    logger.info(f"Reducer workers per submaster = {reducer_workers_per_rsm}")
+    # OPTIMIZATION: Use only 1 worker per RSM to reduce parallelism and rate limiting
+    # Each RSM now handles more data but with fewer concurrent LLM calls
+    reducer_workers_per_rsm = 1  # Fixed to 1 for lighter processing
+    logger.info(f"Reducer workers per submaster = {reducer_workers_per_rsm} (optimized)")
 
     # Prepare global context from latest residual doc if available
     residual_coll = db[os.getenv("MONGO_RESIDUAL_COLLECTION", "residual_memory")]
@@ -440,36 +433,54 @@ def run_reducer_global(metadata: Dict[str, Any] = None, mapper_workers_override:
     if not ray.is_initialized():
         ray.init(
             ignore_reinit_error=True,
-            num_cpus=4,
-            object_store_memory=500 * 1024 * 1024,  # 500MB
+            num_cpus=4
         )
 
-    rsm_refs = []
-    for i, grp in enumerate(groups):
-        rsm_id = f"RSM-{str(i+1).zfill(3)}"
-        rsm = ReducerSubMasterActor.remote(
-            rsm_id,
-            grp,
-            num_workers=reducer_workers_per_rsm,
-            metadata=metadata,
-            global_context=global_context,
-        )
-        rsm_refs.append(rsm)
+    # OPTIMIZATION: Process RSMs in batches to avoid overwhelming the LLM API
+    BATCH_SIZE = 3  # Process only 3 RSMs at a time
+    all_results = []
+    
+    for batch_start in range(0, len(groups), BATCH_SIZE):
+        batch_groups = groups[batch_start:batch_start + BATCH_SIZE]
+        batch_num = (batch_start // BATCH_SIZE) + 1
+        total_batches = math.ceil(len(groups) / BATCH_SIZE)
+        logger.info(f"Processing RSM batch {batch_num}/{total_batches} ({len(batch_groups)} submasters)")
+        
+        rsm_refs = []
+        for i, grp in enumerate(batch_groups):
+            rsm_idx = batch_start + i + 1
+            rsm_id = f"RSM-{str(rsm_idx).zfill(3)}"
+            rsm = ReducerSubMasterActor.remote(
+                rsm_id,
+                grp,
+                num_workers=reducer_workers_per_rsm,
+                metadata=metadata,
+                global_context=global_context,
+            )
+            rsm_refs.append(rsm)
 
-    # initialize + run rsm actors
-    init_futures = [r.initialize.remote() for r in rsm_refs]
-    try:
-        init_statuses = ray.get(init_futures)
-        logger.info("Reducer submasters initialized")
-    except Exception as e:
-        logger.warning(f"Initialization warnings: {e}")
+        # Initialize batch
+        init_futures = [r.initialize.remote() for r in rsm_refs]
+        try:
+            ray.get(init_futures)
+            logger.info(f"Batch {batch_num} RSMs initialized")
+        except Exception as e:
+            logger.warning(f"Batch {batch_num} initialization warnings: {e}")
 
-    proc_futures = [r.process.remote() for r in rsm_refs]
-    try:
-        results = ray.get(proc_futures)
-    except Exception as e:
-        logger.error(f"Error running reducer submasters: {e}")
-        results = []
+        # Process batch
+        proc_futures = [r.process.remote() for r in rsm_refs]
+        try:
+            batch_results = ray.get(proc_futures)
+            all_results.extend(batch_results)
+            logger.info(f"Batch {batch_num} completed with {len(batch_results)} results")
+        except Exception as e:
+            logger.error(f"Batch {batch_num} error: {e}")
+        
+        # Small delay between batches to avoid rate limiting
+        if batch_start + BATCH_SIZE < len(groups):
+            time.sleep(3)
+    
+    results = all_results
 
     # Merge per-rsm outputs into final reducer-level aggregated output
     aggregated = {
