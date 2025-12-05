@@ -49,11 +49,11 @@
       "page_end": 21
     }
   },
-  "created_at": "2025-12-05T10:31:08.023196",
+  "created_at": "2025-12-05T12:10:43.651063",
   "status": "validated",
   "validated_against_pdf": true,
   "high_level_intent": "Summarize for a presentation",
   "user_document_context": "this paper is about how ai is as good at reasoning as humans",
-  "metadata_updated_at": 1764910892.599362,
+  "metadata_updated_at": 1764916868.1698966,
   "master_summary": "Each SubMaster is assigned a distinct section or logical grouping of sections to ensure balanced workload and specialized focus on key document parts."
 }
