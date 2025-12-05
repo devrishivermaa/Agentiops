@@ -20,7 +20,7 @@ logger = get_logger("LLMHelper")
 # ============================================================
 
 class GlobalRateLimiter:
-    def __init__(self, max_requests_per_minute: int = 10, max_requests_per_day: int = 5000):
+    def __init__(self, max_requests_per_minute: int = 30, max_requests_per_day: int = 5000):
         self.max_requests_per_minute = max_requests_per_minute
         self.max_requests_per_day = max_requests_per_day
         
@@ -28,8 +28,8 @@ class GlobalRateLimiter:
         self.request_times_day: List[float] = []
         
         self.lock = threading.Lock()
-        # Increase delay significantly to avoid rate limits across distributed workers
-        self.min_delay_between_requests = 6.0  # 6 seconds between requests per worker
+        # Balance between rate limiting and performance
+        self.min_delay_between_requests = 2.5  # 2.5 seconds between requests per worker
         self.last_request_time = 0.0
         
         logger.info(
@@ -98,7 +98,7 @@ class LLMProcessor:
         except Exception as e:
             raise RuntimeError(f"Failed to init client {e}")
 
-    def call_with_retry(self, prompt: str, parse_json: bool = False, max_tokens: int = 2048) -> Any:
+    def call_with_retry(self, prompt: str, parse_json: bool = False, max_tokens: int = 4096) -> Any:
         last_error = None
 
         for attempt in range(self.max_retries):

@@ -427,9 +427,8 @@ def run_reducer_global(metadata: Dict[str, Any] = None, mapper_workers_override:
     )
     logger.info(f"Assumed mapper workers per submaster = {mapper_workers}")
 
-    # reducer workers per rsm - limit to reduce API rate limiting
-    # Use 1 worker per RSM to avoid overwhelming the LLM API
-    reducer_workers_per_rsm = 1  # Reduced from ceil(mapper_workers/2) to avoid rate limits
+    # reducer workers per rsm is ceil(mapper_workers / 2)
+    reducer_workers_per_rsm = math.ceil(int(mapper_workers) / 2)
     logger.info(f"Reducer workers per submaster = {reducer_workers_per_rsm}")
 
     # Prepare global context from latest residual doc if available

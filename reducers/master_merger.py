@@ -173,18 +173,18 @@ You are creating an executive summary for a comprehensive document analysis.
 {list(dict(sorted(reducer_results.get('entities', {}).items(), key=lambda x: x[1], reverse=True)[:10]).keys())}
 
 **TASK:**
-Create a comprehensive executive summary (300-500 words) that:
+Create a comprehensive executive summary (500-800 words) that:
 1. Provides high-level overview of the entire document
 2. Highlights main themes and findings
 3. Identifies key entities and their roles
 4. Emphasizes technical significance
 5. Notes important patterns and trends
 
-Write in professional, clear prose. Be specific and informative.
+Write in professional, clear prose. Be specific and informative. Include all important details.
 """
         
         try:
-            summary = self.llm.call_with_retry(prompt, parse_json=False)
+            summary = self.llm.call_with_retry(prompt, parse_json=False, max_tokens=8192)
             return summary.strip()
         except Exception as e:
             logger.error(f"[{self.agent_id}] Failed to create executive summary: {e}")
@@ -254,18 +254,18 @@ Themes: {global_context.get('cross_document_themes', [])}
 Strategy: {processing_plan.get('synthesis_strategy', '')}
 
 **TASK:**
-Create a comprehensive section synthesis (200-400 words) that:
+Create a comprehensive section synthesis (400-600 words) that:
 1. Summarizes main content with technical precision
 2. Highlights relationships to other sections
 3. Emphasizes key findings and evidence
 4. Notes important entities and their significance
 5. Identifies patterns and implications
 
-Be specific, detailed, and technically accurate.
+Be specific, detailed, and technically accurate. Include all relevant information.
 """
         
         try:
-            section_text = self.llm.call_with_retry(prompt, parse_json=False)
+            section_text = self.llm.call_with_retry(prompt, parse_json=False, max_tokens=8192)
             
             return {
                 "section_id": rsm_id,
@@ -317,18 +317,18 @@ Analyze cross-cutting patterns across multiple document sections.
 {list(set(all_themes))[:20]}
 
 **TASK:**
-Create a cross-section analysis (250-350 words) that:
+Create a cross-section analysis (400-600 words) that:
 1. Identifies patterns appearing across multiple sections
 2. Analyzes relationships between key entities
 3. Notes evolution of themes throughout document
 4. Highlights significant connections and dependencies
 5. Synthesizes overarching narrative
 
-Focus on connections and relationships rather than individual sections.
+Focus on connections and relationships rather than individual sections. Be comprehensive.
 """
         
         try:
-            analysis = self.llm.call_with_retry(prompt, parse_json=False)
+            analysis = self.llm.call_with_retry(prompt, parse_json=False, max_tokens=8192)
             return analysis.strip()
         except Exception as e:
             logger.error(f"[{self.agent_id}] Failed cross-section analysis: {e}")
@@ -359,18 +359,18 @@ Create a technical deep dive into key concepts from this document.
 {list(top_technical.keys())}
 
 **TASK:**
-Write a technical analysis (300-450 words) that:
+Write a technical analysis (500-800 words) that:
 1. Explains key technical concepts in detail
 2. Describes methodologies and approaches
 3. Analyzes technical relationships and dependencies
 4. Notes technical innovations or novel approaches
 5. Provides context for technical significance
 
-Write for a technical audience with domain expertise.
+Write for a technical audience with domain expertise. Be thorough and detailed.
 """
         
         try:
-            deep_dive = self.llm.call_with_retry(prompt, parse_json=False)
+            deep_dive = self.llm.call_with_retry(prompt, parse_json=False, max_tokens=8192)
             return deep_dive.strip()
         except Exception as e:
             logger.error(f"[{self.agent_id}] Failed technical deep dive: {e}")
@@ -413,10 +413,10 @@ Write for a technical audience with domain expertise.
 Generate final insights and conclusions for this document analysis.
 
 **ALL INSIGHTS:**
-{all_insights[:30]}
+{all_insights[:50]}
 
 **KEY POINTS:**
-{key_points[:30]}
+{key_points[:50]}
 
 **GLOBAL THEMES:**
 {global_context.get('cross_document_themes', [])}
@@ -427,16 +427,18 @@ Generate final insights and conclusions for this document analysis.
 **TASK:**
 Return a JSON object with:
 {{
-  "key_findings": ["finding1", "finding2", ...],  // 5-10 most important findings
-  "conclusions": "Comprehensive conclusion paragraph (150-250 words)",
-  "implications": ["implication1", "implication2", ...],  // Broader implications
-  "recommendations": ["rec1", "rec2", ...],  // If applicable
-  "future_directions": ["direction1", "direction2", ...]  // Potential future work
+  "key_findings": ["finding1", "finding2", ...],  // 10-15 most important findings with details
+  "conclusions": "Comprehensive conclusion paragraph (300-500 words) that summarizes all key points",
+  "implications": ["implication1", "implication2", ...],  // 5-8 broader implications
+  "recommendations": ["rec1", "rec2", ...],  // 5-8 recommendations if applicable
+  "future_directions": ["direction1", "direction2", ...]  // 3-5 potential future work areas
 }}
+
+Be thorough and comprehensive in each section.
 """
         
         try:
-            result = self.llm.call_with_retry(prompt, parse_json=True)
+            result = self.llm.call_with_retry(prompt, parse_json=True, max_tokens=8192)
             return result
         except Exception as e:
             logger.error(f"[{self.agent_id}] Failed to generate insights: {e}")

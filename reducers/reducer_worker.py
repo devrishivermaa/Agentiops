@@ -111,14 +111,18 @@ Raw summaries:
 {combined_text}
 
 Requirements:
-Make the summary clear, non repetitive, technically accurate.
-Length between 200 and 350 words.
-Professional tone.
-Only output the final summary.
+- Make the summary clear, non repetitive, technically accurate
+- Length between 400 and 700 words - be comprehensive
+- Preserve all important technical details, entities, and findings
+- Professional tone
+- Include specific data points, metrics, and evidence where available
+- Only output the final summary
+
+Be thorough and detailed. Do not omit important information.
 """
 
         try:
-            result = self.llm.call_with_retry(prompt, parse_json=False)
+            result = self.llm.call_with_retry(prompt, parse_json=False, max_tokens=4096)
             return result.strip()
 
         except Exception as e:
