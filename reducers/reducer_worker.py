@@ -89,45 +89,36 @@ class ReducerWorker:
     def _enhance_summary_llm(self, items: List[Dict[str, Any]], extra_instructions: str) -> str:
 
         raw_summaries = [i.get("summary", "") for i in items if i.get("summary")]
-        combined_text = "\n".join(raw_summaries)
+        combined_text = "\n".join(raw_summaries)[:2000]  # OPTIMIZATION: Limit input size
 
         if not combined_text:
             return ""
 
-        instruction_block = self._extract_reducer_instructions()
+        instruction_block = self._extract_reducer_instructions()[:500]  # Limit instructions
 
         if extra_instructions:
-            instruction_block += "\n" + extra_instructions
+            instruction_block += "\n" + extra_instructions[:200]
 
-        prompt = f"""
-You are an expert summarization system.
+        # OPTIMIZED: Shorter, focused prompt
+        prompt = f"""Refine these mapper summaries into one unified summary (200-300 words).
 
-Your task is to refine mapper summaries into one unified high quality summary.
+Context: {instruction_block}
 
-Context:
-{instruction_block}
-
-Raw summaries:
+Summaries:
 {combined_text}
 
-Requirements:
-- Make the summary clear, non repetitive, technically accurate
-- Length between 400 and 700 words - be comprehensive
-- Preserve all important technical details, entities, and findings
-- Professional tone
-- Include specific data points, metrics, and evidence where available
-- Only output the final summary
+Requirements: Clear, non-repetitive, technically accurate, professional tone. Include key data points.
 
 Be thorough and detailed. Do not omit important information.
 """
 
         try:
-            result = self.llm.call_with_retry(prompt, parse_json=False, max_tokens=4096)
+            result = self.llm.call_with_retry(prompt, parse_json=False, max_tokens=1500)  # Reduced from 4096
             return result.strip()
 
         except Exception as e:
             logger.error(f"[{self.worker_id}] LLM error: {e}")
-            return combined_text
+            return combined_text[:500]  # Return truncated on error
 
     # ---------------------------------------------------------------
     def process_chunk(self, chunk: List[Dict[str, Any]], instructions: str = "") -> Dict[str, Any]:

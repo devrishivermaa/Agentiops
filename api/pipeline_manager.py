@@ -273,8 +273,8 @@ class PipelineManager:
             if not ray.is_initialized():
                 ray.init(
                     ignore_reinit_error=True, 
-                    num_cpus=4,
-                    object_store_memory=500 * 1024 * 1024,  # 500MB object store
+                    num_cpus=4
+                    
                 )
             residual = ResidualAgentActor.remote()
             
@@ -1025,8 +1025,8 @@ class PipelineManager:
             if not ray.is_initialized():
                 ray.init(
                     ignore_reinit_error=True, 
-                    num_cpus=4,
-                    object_store_memory=500 * 1024 * 1024,  # 500MB object store
+                    num_cpus=4
+                    
                 )
             
             # Create ResidualAgent with pipeline_id for event tracking

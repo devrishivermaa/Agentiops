@@ -1,6 +1,6 @@
 {
   "num_submasters": 4,
-  "distribution_strategy": "Each SubMaster is assigned a distinct section or logical grouping of sections to ensure comprehensive coverage while maintaining focus on their specialized roles.",
+  "distribution_strategy": "Each SubMaster is assigned a distinct section or logical grouping of sections to ensure comprehensive coverage while maintaining focus on key areas for presentation summarization.",
   "submasters": [
     {
       "submaster_id": "SM-001",
@@ -17,31 +17,31 @@
     },
     {
       "submaster_id": "SM-002",
-      "role": "Extract Key Findings from Body",
+      "role": "Summarize Body (Part 1)",
       "assigned_sections": [
         "Body"
       ],
       "page_range": [
         7,
-        12
+        11
       ],
       "estimated_workload": "high"
     },
     {
       "submaster_id": "SM-003",
-      "role": "Analyze Methodology and Results",
+      "role": "Summarize Body (Part 2)",
       "assigned_sections": [
         "Body"
       ],
       "page_range": [
-        13,
+        12,
         16
       ],
       "estimated_workload": "high"
     },
     {
       "submaster_id": "SM-004",
-      "role": "Summarize Conclusion and Recommendations",
+      "role": "Summarize Conclusion",
       "assigned_sections": [
         "Conclusion"
       ],
