@@ -1,5 +1,6 @@
 /majorproject 
 .env
+**/__pycache__/
 __pycache__/
 .venv
 *.pyc
@@ -36,3 +37,7 @@ build/
 /dist/
 /build/
 .env
+
+/data
+output/
+/output

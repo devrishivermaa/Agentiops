@@ -1,6 +1,6 @@
 {
   "num_submasters": 4,
-  "distribution_strategy": "Each SubMaster is assigned a distinct section or logical grouping of sections to ensure balanced workload and specialized focus on key document parts.",
+  "distribution_strategy": "Divide the document into logical sections, assigning each SubMaster a distinct role to extract key findings and methodology from specific sections while ensuring all pages are covered within the 1-21 range.",
   "submasters": [
     {
       "submaster_id": "SM-001",
@@ -17,7 +17,7 @@
     },
     {
       "submaster_id": "SM-002",
-      "role": "Extract Methods from Body",
+      "role": "Extract Methodology from Body",
       "assigned_sections": [
         "Body"
       ],
@@ -29,7 +29,7 @@
     },
     {
       "submaster_id": "SM-003",
-      "role": "Extract Results from Body",
+      "role": "Extract Key Findings from Body",
       "assigned_sections": [
         "Body"
       ],
