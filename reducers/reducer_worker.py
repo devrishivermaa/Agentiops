@@ -3,6 +3,7 @@
 import time
 import uuid
 import ray
+import hashlib
 from typing import Dict, Any, List, Optional
 from utils.logger import get_logger
 from utils.llm_helper import LLMProcessor
@@ -16,9 +17,7 @@ class ReducerWorker:
     def __init__(self, worker_id: str, llm_model: str = "mistral-small-latest"):
         self.worker_id = worker_id
         self.llm_model = llm_model
-        self.status = "initialized"
 
-        # LLM Processor interface
         self.llm = LLMProcessor(
             model=llm_model,
             temperature=0.3,
@@ -26,127 +25,145 @@ class ReducerWorker:
             caller_id=worker_id
         )
 
-        # ResidualAgent context
+        # Cache: hash(chunk) -> summary
+        self.cache: Dict[str, Any] = {}
+
         self.global_context: Dict[str, Any] = {}
+        self.status = "initialized"
 
         logger.info(f"[{self.worker_id}] ReducerWorker initialized")
 
-    # ---------------------------------------------------------------------
-    # Receive global context from ResidualAgent
-    # ---------------------------------------------------------------------
+    # ---------------------------------------------------------------
     def set_global_context(self, context: Dict[str, Any]):
         self.global_context = context or {}
-        logger.info(f"[{self.worker_id}] Global context received: {list(self.global_context.keys())}")
         return {"status": "ok"}
 
-    # ---------------------------------------------------------------------
-    # Worker initialization
-    # ---------------------------------------------------------------------
+    # ---------------------------------------------------------------
     def initialize(self):
         self.status = "ready"
-        logger.info(f"[{self.worker_id}] Worker ready")
         return {"worker_id": self.worker_id, "status": "ready"}
 
-    # ---------------------------------------------------------------------
-    # PRIVATE: Generate LLM-enhanced summary using raw + instructions
-    # ---------------------------------------------------------------------
-    def _enhance_summary_llm(
-        self,
-        items: List[Dict[str, Any]],
-        extra_instructions: str = ""
-    ) -> str:
+    # ---------------------------------------------------------------
+    def _extract_reducer_instructions(self) -> str:
+        """Create reducer level instruction text from global context."""
+        if not self.global_context:
+            return ""
 
-        # Collect all summaries
+        wc = self.global_context.get("worker_guidance", {})
+        sc = self.global_context.get("submaster_guidance", {})
+        style = self.global_context.get("reasoning_style", "")
+        outputs = self.global_context.get("expected_outputs", "")
+
+        text = []
+
+        if wc:
+            text.append("Worker Guidance:")
+            for k, v in wc.items():
+                text.append(f"{k}: {v}")
+
+        if sc:
+            text.append("Submaster Guidance:")
+            for k, v in sc.items():
+                text.append(f"{k}: {v}")
+
+        if style:
+            text.append(f"Preferred reasoning style: {style}")
+
+        if outputs:
+            text.append(f"Expected outputs: {outputs}")
+
+        return "\n".join(text)
+
+    # ---------------------------------------------------------------
+    def _chunk_hash(self, chunk: List[Dict[str, Any]]) -> str:
+        """Compute a stable hash to detect repeated work."""
+        raw = ""
+        for item in chunk:
+            raw += item.get("summary", "")
+            raw += ",".join(item.get("keywords", []))
+            raw += ",".join(item.get("entities", []))
+
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    # ---------------------------------------------------------------
+    def _enhance_summary_llm(self, items: List[Dict[str, Any]], extra_instructions: str) -> str:
+
         raw_summaries = [i.get("summary", "") for i in items if i.get("summary")]
         combined_text = "\n".join(raw_summaries)
 
         if not combined_text:
             return ""
 
-        # Add residual context + instructions
-        context_lines = []
-
-        if self.global_context:
-            hc = self.global_context.get("high_level_intent", "")
-            rc = self.global_context.get("expected_outputs", {}).get("reasoning_style", "")
-            context_lines.append(f"High-Level Goal: {hc}")
-            context_lines.append(f"Preferred Style: {rc}")
+        instruction_block = self._extract_reducer_instructions()
 
         if extra_instructions:
-            context_lines.append(f"Reducer Instructions: {extra_instructions}")
-
-        context_block = "\n".join(context_lines)
+            instruction_block += "\n" + extra_instructions
 
         prompt = f"""
-You are an expert document analysis LLM.
+You are an expert summarization system.
 
-Your task is to transform a set of mapper-level summaries into a 
-single enhanced, unified, high-quality summary.
+Your task is to refine mapper summaries into one unified high quality summary.
 
-CONTEXT:
-{context_block}
+Context:
+{instruction_block}
 
-RAW SUMMARIES (from mapper workers):
+Raw summaries:
 {combined_text}
 
-REQUIREMENTS:
-- Create a refined, structured summary
-- Remove repetition
-- Improve clarity
-- Preserve all technical meaning
-- Include cross-section insights when relevant
-- 200 to 350 words
-- Professional tone
-
-Return only the improved summary, no JSON.
+Requirements:
+Make the summary clear, non repetitive, technically accurate.
+Length between 200 and 350 words.
+Professional tone.
+Only output the final summary.
 """
 
         try:
-            response = self.llm.call_with_retry(prompt, parse_json=False)
-            return response.strip()
-        except Exception as e:
-            logger.error(f"[{self.worker_id}] LLM failure: {e}")
-            return combined_text  # fallback
+            result = self.llm.call_with_retry(prompt, parse_json=False)
+            return result.strip()
 
-    # ---------------------------------------------------------------------
-    # MAIN: Process one reducer chunk (summary enhancement + merging)
-    # ---------------------------------------------------------------------
+        except Exception as e:
+            logger.error(f"[{self.worker_id}] LLM error: {e}")
+            return combined_text
+
+    # ---------------------------------------------------------------
     def process_chunk(self, chunk: List[Dict[str, Any]], instructions: str = "") -> Dict[str, Any]:
+
         start = time.time()
 
-        logger.info(f"[{self.worker_id}] Processing chunk size: {len(chunk)}")
+        # Check cache
+        h = self._chunk_hash(chunk)
+        if h in self.cache:
+            logger.info(f"[{self.worker_id}] Cache hit for chunk")
+            cached = self.cache[h]
+            cached["cache"] = True
+            return cached
 
+        # Merge entities, keywords, etc
         entity_count = {}
         keyword_count = {}
         term_count = {}
         key_points = []
         insights = []
 
-        # Merge raw mapper content
         for item in chunk:
-
             for e in item.get("entities", []):
                 entity_count[e] = entity_count.get(e, 0) + 1
-
             for k in item.get("keywords", []):
                 keyword_count[k] = keyword_count.get(k, 0) + 1
-
             for t in item.get("technical_terms", []):
                 term_count[t] = term_count.get(t, 0) + 1
 
-            # carry key points forward
             key_points.extend(item.get("key_points", []))
             insights.extend(item.get("key_points", []))
 
-        # LLM-enhanced summary
-        final_summary = self._enhance_summary_llm(
+        summary = self._enhance_summary_llm(
             items=chunk,
             extra_instructions=instructions
         )
 
         result = {
             "worker_id": self.worker_id,
-            "summary": final_summary,
+            "summary": summary,
             "entities": entity_count,
             "keywords": keyword_count,
             "technical_terms": term_count,
@@ -154,9 +171,11 @@ Return only the improved summary, no JSON.
             "insights": list(set(insights)),
             "global_context_used": bool(self.global_context),
             "processing_time": round(time.time() - start, 3),
-            "status": "success"
+            "status": "success",
+            "cache": False
         }
 
-        logger.info(f"[{self.worker_id}] Completed chunk in {result['processing_time']} seconds")
+        # Store in cache
+        self.cache[h] = result
 
         return result

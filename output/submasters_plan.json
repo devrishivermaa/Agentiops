@@ -17,7 +17,7 @@
     },
     {
       "submaster_id": "SM-002",
-      "role": "Extract Methods from Body",
+      "role": "Extract Key Methods from Body",
       "assigned_sections": [
         "Body"
       ],
@@ -29,7 +29,7 @@
     },
     {
       "submaster_id": "SM-003",
-      "role": "Extract Results from Body",
+      "role": "Extract Key Results from Body",
       "assigned_sections": [
         "Body"
       ],
@@ -49,7 +49,7 @@
         17,
         21
       ],
-      "estimated_workload": "medium"
+      "estimated_workload": "low"
     }
   ],
   "status": "approved"

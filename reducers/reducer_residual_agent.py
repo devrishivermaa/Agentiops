@@ -71,7 +71,7 @@ class ResidualAgent:
         try:
             client = MongoClient(uri)
             db = client[dbname]
-            self.residual_coll = db[os.getenv("MONGO_RESIDUAL_COLLECTION", "reducer_residual_memory")]
+            self.residual_coll = db[os.getenv("MONGO_REDUCER_RESIDUAL_COLLECTION", "reducer_residual_memory")]
             logger.info(f"[{self.agent_id}] Connected to MongoDB: {dbname}")
         except Exception as e:
             logger.error(f"[{self.agent_id}] MongoDB connection failed: {e}")
