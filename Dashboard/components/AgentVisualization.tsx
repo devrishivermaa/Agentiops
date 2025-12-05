@@ -23,6 +23,9 @@ import {
   GitMerge,
   FileOutput,
   Brain,
+  ChevronDown,
+  ChevronUp,
+  BarChart3,
 } from "lucide-react";
 import { TreeNode } from "./agent/TreeNode";
 import { AgentDetailPanel } from "./agent/AgentDetailPanel";
@@ -51,6 +54,7 @@ export const AgentVisualization: React.FC = () => {
   const agentList = Object.values(agents) as AgentNode[];
   const [selectedAgent, setSelectedAgent] = useState<AgentNode | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [metricsExpanded, setMetricsExpanded] = useState(false);
 
   const master = agentList.find((a) => a.type === AgentType.MASTER);
   const residual = agentList.find((a) => a.type === AgentType.RESIDUAL);
@@ -198,248 +202,85 @@ export const AgentVisualization: React.FC = () => {
         }}
       />
 
-      {/* Live Stats Bar */}
+      {/* Live Stats Bar - Compact with Collapsible Details */}
       <div className="absolute top-0 left-0 right-0 z-20 bg-zinc-900/90 backdrop-blur-xl border-b border-zinc-800/50">
-        <div className="px-4 md:px-6 py-3">
-          {/* Main Stats Row */}
+        <div className="px-4 md:px-6 py-2">
+          {/* Compact Header Row - Always Visible */}
           <div className="flex items-center justify-between gap-4">
-            {/* Left: Agent Stats */}
-            <div className="flex items-center gap-3 md:gap-4">
-              {/* Total Agents */}
-              <motion.div
-                className="flex items-center gap-2 px-3 py-2 bg-zinc-800/60 rounded-xl border border-zinc-700/50"
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.3 }}
+            {/* Left: Compact Stats + Toggle */}
+            <div className="flex items-center gap-3">
+              {/* Toggle Button */}
+              <motion.button
+                onClick={() => setMetricsExpanded(!metricsExpanded)}
+                className="flex items-center gap-2 px-3 py-2 bg-zinc-800/60 hover:bg-zinc-700/60 rounded-xl border border-zinc-700/50 transition-all"
+                whileTap={{ scale: 0.95 }}
               >
-                <div className="w-8 h-8 rounded-lg bg-zinc-700/50 flex items-center justify-center">
-                  <Users size={16} className="text-zinc-300" />
-                </div>
-                <div className="hidden sm:block">
-                  <div className="text-lg font-bold text-zinc-100">
-                    {totalAgents}
-                  </div>
-                  <div className="text-[10px] text-zinc-500 uppercase tracking-wide">
-                    Agents
-                  </div>
-                </div>
-                <span className="sm:hidden text-sm font-medium text-zinc-300">
-                  {totalAgents}
+                <BarChart3 size={16} className="text-zinc-400" />
+                <span className="text-sm font-medium text-zinc-300">
+                  Metrics
                 </span>
-              </motion.div>
-
-              {/* Active */}
-              <motion.div
-                className="flex items-center gap-2 px-3 py-2 bg-blue-500/10 rounded-xl border border-blue-500/20"
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.3, delay: 0.05 }}
-              >
-                <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                  <Zap size={16} className="text-blue-400" />
-                </div>
-                <div className="hidden sm:block">
-                  <div className="text-lg font-bold text-blue-400">
-                    {activeAgents}
-                  </div>
-                  <div className="text-[10px] text-blue-400/70 uppercase tracking-wide">
-                    Active
-                  </div>
-                </div>
-                <span className="sm:hidden text-sm font-medium text-blue-400">
-                  {activeAgents}
-                </span>
-              </motion.div>
-
-              {/* Completed */}
-              <motion.div
-                className="flex items-center gap-2 px-3 py-2 bg-green-500/10 rounded-xl border border-green-500/20"
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.3, delay: 0.1 }}
-              >
-                <div className="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center">
-                  <CheckCircle2 size={16} className="text-green-400" />
-                </div>
-                <div className="hidden sm:block">
-                  <div className="text-lg font-bold text-green-400">
-                    {completedAgents}
-                  </div>
-                  <div className="text-[10px] text-green-400/70 uppercase tracking-wide">
-                    Done
-                  </div>
-                </div>
-                <span className="sm:hidden text-sm font-medium text-green-400">
-                  {completedAgents}
-                </span>
-              </motion.div>
-
-              {/* Elapsed Time */}
-              {pipeline.startTime && (
                 <motion.div
-                  className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${
-                    pipeline.status === "completed"
-                      ? "bg-violet-500/10 border-violet-500/20"
-                      : "bg-amber-500/10 border-amber-500/20"
-                  }`}
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.3, delay: 0.15 }}
+                  animate={{ rotate: metricsExpanded ? 180 : 0 }}
+                  transition={{ duration: 0.2 }}
                 >
-                  <div
-                    className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                      pipeline.status === "completed"
-                        ? "bg-violet-500/20"
-                        : "bg-amber-500/20"
-                    }`}
-                  >
-                    <Timer
-                      size={16}
+                  <ChevronDown size={14} className="text-zinc-500" />
+                </motion.div>
+              </motion.button>
+
+              {/* Mini Stats (always visible) */}
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-zinc-500">{totalAgents} agents</span>
+                <span className="text-zinc-600">•</span>
+                <span className="text-blue-400">{activeAgents} active</span>
+                <span className="text-zinc-600">•</span>
+                <span className="text-green-400">{completedAgents} done</span>
+                {pipeline.startTime && (
+                  <>
+                    <span className="text-zinc-600">•</span>
+                    <span
                       className={
                         pipeline.status === "completed"
                           ? "text-violet-400"
                           : "text-amber-400"
                       }
-                    />
-                  </div>
-                  <div className="hidden sm:block">
-                    <div
-                      className={`text-lg font-bold font-mono ${
-                        pipeline.status === "completed"
-                          ? "text-violet-400"
-                          : "text-amber-400"
-                      }`}
                     >
                       {formatElapsedTime(elapsedTime)}
-                    </div>
-                    <div
-                      className={`text-[10px] uppercase tracking-wide ${
-                        pipeline.status === "completed"
-                          ? "text-violet-400/70"
-                          : "text-amber-400/70"
-                      }`}
-                    >
-                      {pipeline.status === "completed" ? "Total" : "Elapsed"}
-                    </div>
-                  </div>
+                    </span>
+                  </>
+                )}
+              </div>
+
+              {/* Status indicator */}
+              {pipeline.status !== "idle" && (
+                <div
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${
+                    pipeline.status === "completed"
+                      ? "bg-green-500/10 border border-green-500/20"
+                      : pipeline.status === "failed"
+                      ? "bg-red-500/10 border border-red-500/20"
+                      : "bg-blue-500/10 border border-blue-500/20"
+                  }`}
+                >
+                  {pipeline.status === "running" && (
+                    <Loader2 size={12} className="text-blue-400 animate-spin" />
+                  )}
                   <span
-                    className={`sm:hidden text-xs font-mono font-medium ${
+                    className={`text-xs font-medium capitalize ${
                       pipeline.status === "completed"
-                        ? "text-violet-400"
-                        : "text-amber-400"
+                        ? "text-green-400"
+                        : pipeline.status === "failed"
+                        ? "text-red-400"
+                        : "text-blue-400"
                     }`}
                   >
-                    {formatElapsedTime(elapsedTime)}
-                  </span>
-                </motion.div>
-              )}
-            </div>
-
-            {/* Center: Architecture Pills (hidden on mobile) */}
-            <div className="hidden lg:flex items-center gap-2 flex-wrap">
-              {residual && (
-                <motion.button
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  onClick={() => setSelectedAgent(residual)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-500/10 rounded-lg border border-cyan-500/20 hover:bg-cyan-500/20 transition-all"
-                >
-                  <Globe size={14} className="text-cyan-400" />
-                  <span className="text-xs font-medium text-cyan-400">
-                    Residual
-                  </span>
-                </motion.button>
-              )}
-              {reducer && (
-                <motion.button
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.05 }}
-                  onClick={() => setSelectedAgent(reducer)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 rounded-lg border border-emerald-500/20 hover:bg-emerald-500/20 transition-all"
-                >
-                  <Layers size={14} className="text-emerald-400" />
-                  <span className="text-xs font-medium text-emerald-400">
-                    Reducer
-                  </span>
-                </motion.button>
-              )}
-              {/* Reducer Pipeline Agents */}
-              {reducerSubmasters && (
-                <motion.button
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.1 }}
-                  onClick={() => setSelectedAgent(reducerSubmasters)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-500/10 rounded-lg border border-purple-500/20 hover:bg-purple-500/20 transition-all"
-                >
-                  <Layers size={14} className="text-purple-400" />
-                  <span className="text-xs font-medium text-purple-400">
-                    Reducer SM
-                  </span>
-                </motion.button>
-              )}
-              {reducerResidual && (
-                <motion.button
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.15 }}
-                  onClick={() => setSelectedAgent(reducerResidual)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-pink-500/10 rounded-lg border border-pink-500/20 hover:bg-pink-500/20 transition-all"
-                >
-                  <Brain size={14} className="text-pink-400" />
-                  <span className="text-xs font-medium text-pink-400">
-                    Context
-                  </span>
-                </motion.button>
-              )}
-              {masterMerger && (
-                <motion.button
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.2 }}
-                  onClick={() => setSelectedAgent(masterMerger)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500/10 rounded-lg border border-orange-500/20 hover:bg-orange-500/20 transition-all"
-                >
-                  <GitMerge size={14} className="text-orange-400" />
-                  <span className="text-xs font-medium text-orange-400">
-                    Merger
-                  </span>
-                </motion.button>
-              )}
-              {pdfGenerator && (
-                <motion.button
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.25 }}
-                  onClick={() => setSelectedAgent(pdfGenerator)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-500/10 rounded-lg border border-rose-500/20 hover:bg-rose-500/20 transition-all"
-                >
-                  <FileOutput size={14} className="text-rose-400" />
-                  <span className="text-xs font-medium text-rose-400">PDF</span>
-                </motion.button>
-              )}
-              {submasters.length > 0 && (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 rounded-lg border border-amber-500/20">
-                  <Activity size={14} className="text-amber-400" />
-                  <span className="text-xs font-medium text-amber-400">
-                    {submasters.length} SubMasters
-                  </span>
-                </div>
-              )}
-              {workers.length > 0 && (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/60 rounded-lg border border-zinc-700/50">
-                  <TrendingUp size={14} className="text-zinc-400" />
-                  <span className="text-xs font-medium text-zinc-300">
-                    {workers.length} Workers
+                    {pipeline.status}
                   </span>
                 </div>
               )}
             </div>
 
-            {/* Right: Download & Status */}
-            <div className="flex items-center gap-3">
-              {/* Download buttons when pipeline completed */}
+            {/* Right: Download Buttons (always visible) */}
+            <div className="flex items-center gap-2">
               {pipeline.status === "completed" && (
                 <motion.div
                   className="flex items-center gap-2"
@@ -475,36 +316,242 @@ export const AgentVisualization: React.FC = () => {
                   </button>
                 </motion.div>
               )}
-
-              {/* Status indicator */}
-              {pipeline.status !== "idle" && (
-                <div
-                  className={`hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg ${
-                    pipeline.status === "completed"
-                      ? "bg-green-500/10 border border-green-500/20"
-                      : pipeline.status === "failed"
-                      ? "bg-red-500/10 border border-red-500/20"
-                      : "bg-blue-500/10 border border-blue-500/20"
-                  }`}
-                >
-                  {pipeline.status === "running" && (
-                    <Loader2 size={14} className="text-blue-400 animate-spin" />
-                  )}
-                  <span
-                    className={`text-xs font-medium capitalize ${
-                      pipeline.status === "completed"
-                        ? "text-green-400"
-                        : pipeline.status === "failed"
-                        ? "text-red-400"
-                        : "text-blue-400"
-                    }`}
-                  >
-                    {pipeline.status}
-                  </span>
-                </div>
-              )}
             </div>
           </div>
+
+          {/* Collapsible Detailed Metrics */}
+          <AnimatePresence>
+            {metricsExpanded && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="overflow-hidden"
+              >
+                <div className="pt-3 mt-3 border-t border-zinc-800/50">
+                  {/* Detailed Stats Row */}
+                  <div className="flex flex-wrap items-center gap-3 mb-3">
+                    {/* Total Agents */}
+                    <motion.div
+                      className="flex items-center gap-2 px-3 py-2 bg-zinc-800/60 rounded-xl border border-zinc-700/50"
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-zinc-700/50 flex items-center justify-center">
+                        <Users size={16} className="text-zinc-300" />
+                      </div>
+                      <div>
+                        <div className="text-lg font-bold text-zinc-100">
+                          {totalAgents}
+                        </div>
+                        <div className="text-[10px] text-zinc-500 uppercase tracking-wide">
+                          Total Agents
+                        </div>
+                      </div>
+                    </motion.div>
+
+                    {/* Active */}
+                    <motion.div
+                      className="flex items-center gap-2 px-3 py-2 bg-blue-500/10 rounded-xl border border-blue-500/20"
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.2, delay: 0.05 }}
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
+                        <Zap size={16} className="text-blue-400" />
+                      </div>
+                      <div>
+                        <div className="text-lg font-bold text-blue-400">
+                          {activeAgents}
+                        </div>
+                        <div className="text-[10px] text-blue-400/70 uppercase tracking-wide">
+                          Active
+                        </div>
+                      </div>
+                    </motion.div>
+
+                    {/* Completed */}
+                    <motion.div
+                      className="flex items-center gap-2 px-3 py-2 bg-green-500/10 rounded-xl border border-green-500/20"
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.2, delay: 0.1 }}
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center">
+                        <CheckCircle2 size={16} className="text-green-400" />
+                      </div>
+                      <div>
+                        <div className="text-lg font-bold text-green-400">
+                          {completedAgents}
+                        </div>
+                        <div className="text-[10px] text-green-400/70 uppercase tracking-wide">
+                          Completed
+                        </div>
+                      </div>
+                    </motion.div>
+
+                    {/* Elapsed Time */}
+                    {pipeline.startTime && (
+                      <motion.div
+                        className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${
+                          pipeline.status === "completed"
+                            ? "bg-violet-500/10 border-violet-500/20"
+                            : "bg-amber-500/10 border-amber-500/20"
+                        }`}
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.2, delay: 0.15 }}
+                      >
+                        <div
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                            pipeline.status === "completed"
+                              ? "bg-violet-500/20"
+                              : "bg-amber-500/20"
+                          }`}
+                        >
+                          <Timer
+                            size={16}
+                            className={
+                              pipeline.status === "completed"
+                                ? "text-violet-400"
+                                : "text-amber-400"
+                            }
+                          />
+                        </div>
+                        <div>
+                          <div
+                            className={`text-lg font-bold font-mono ${
+                              pipeline.status === "completed"
+                                ? "text-violet-400"
+                                : "text-amber-400"
+                            }`}
+                          >
+                            {formatElapsedTime(elapsedTime)}
+                          </div>
+                          <div
+                            className={`text-[10px] uppercase tracking-wide ${
+                              pipeline.status === "completed"
+                                ? "text-violet-400/70"
+                                : "text-amber-400/70"
+                            }`}
+                          >
+                            {pipeline.status === "completed"
+                              ? "Total Time"
+                              : "Elapsed"}
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </div>
+
+                  {/* Architecture Pills */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {residual && (
+                      <motion.button
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        onClick={() => setSelectedAgent(residual)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-500/10 rounded-lg border border-cyan-500/20 hover:bg-cyan-500/20 transition-all"
+                      >
+                        <Globe size={14} className="text-cyan-400" />
+                        <span className="text-xs font-medium text-cyan-400">
+                          Residual
+                        </span>
+                      </motion.button>
+                    )}
+                    {reducer && (
+                      <motion.button
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.05 }}
+                        onClick={() => setSelectedAgent(reducer)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 rounded-lg border border-emerald-500/20 hover:bg-emerald-500/20 transition-all"
+                      >
+                        <Layers size={14} className="text-emerald-400" />
+                        <span className="text-xs font-medium text-emerald-400">
+                          Reducer
+                        </span>
+                      </motion.button>
+                    )}
+                    {reducerSubmasters && (
+                      <motion.button
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.1 }}
+                        onClick={() => setSelectedAgent(reducerSubmasters)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-500/10 rounded-lg border border-purple-500/20 hover:bg-purple-500/20 transition-all"
+                      >
+                        <Layers size={14} className="text-purple-400" />
+                        <span className="text-xs font-medium text-purple-400">
+                          Reducer SM
+                        </span>
+                      </motion.button>
+                    )}
+                    {reducerResidual && (
+                      <motion.button
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.15 }}
+                        onClick={() => setSelectedAgent(reducerResidual)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-pink-500/10 rounded-lg border border-pink-500/20 hover:bg-pink-500/20 transition-all"
+                      >
+                        <Brain size={14} className="text-pink-400" />
+                        <span className="text-xs font-medium text-pink-400">
+                          Context
+                        </span>
+                      </motion.button>
+                    )}
+                    {masterMerger && (
+                      <motion.button
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.2 }}
+                        onClick={() => setSelectedAgent(masterMerger)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500/10 rounded-lg border border-orange-500/20 hover:bg-orange-500/20 transition-all"
+                      >
+                        <GitMerge size={14} className="text-orange-400" />
+                        <span className="text-xs font-medium text-orange-400">
+                          Merger
+                        </span>
+                      </motion.button>
+                    )}
+                    {pdfGenerator && (
+                      <motion.button
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.25 }}
+                        onClick={() => setSelectedAgent(pdfGenerator)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-500/10 rounded-lg border border-rose-500/20 hover:bg-rose-500/20 transition-all"
+                      >
+                        <FileOutput size={14} className="text-rose-400" />
+                        <span className="text-xs font-medium text-rose-400">
+                          PDF
+                        </span>
+                      </motion.button>
+                    )}
+                    {submasters.length > 0 && (
+                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 rounded-lg border border-amber-500/20">
+                        <Activity size={14} className="text-amber-400" />
+                        <span className="text-xs font-medium text-amber-400">
+                          {submasters.length} SubMasters
+                        </span>
+                      </div>
+                    )}
+                    {workers.length > 0 && (
+                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/60 rounded-lg border border-zinc-700/50">
+                        <TrendingUp size={14} className="text-zinc-400" />
+                        <span className="text-xs font-medium text-zinc-300">
+                          {workers.length} Workers
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Current Step (shown below when running) */}
           {pipeline.status === "running" && pipeline.currentStep && (
