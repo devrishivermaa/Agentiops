@@ -1,0 +1,536 @@
+"""
+Master Merger Agent - Final Document Synthesis
+
+Takes complete outputs from all reducer submasters along with global context
+from ResidualAgent and creates an extremely detailed, comprehensive final summary.
+
+Run from project root:
+    python -m agents.master_merger
+"""
+
+import os
+import sys
+import json
+import time
+from typing import Dict, Any, List
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+import ray
+from pymongo import MongoClient
+
+from utils.logger import get_logger
+from utils.llm_helper import LLMProcessor
+
+logger = get_logger("MasterMerger")
+
+
+@ray.remote
+class MasterMergerAgent:
+    """
+    Final synthesis agent that creates comprehensive document summary
+    by merging all reducer submaster outputs with global context guidance.
+    """
+
+    def __init__(self, agent_id: str = "MASTER-MERGER-001", llm_model: str = None):
+        self.agent_id = agent_id
+        self.llm_model = llm_model or os.getenv("LLM_MODEL", "mistral-small-latest")
+        
+        # Initialize LLM with higher token capacity for synthesis
+        try:
+            self.llm = LLMProcessor(
+                model=self.llm_model,
+                temperature=0.2,  # Lower temperature for consistent synthesis
+                caller_id=self.agent_id
+            )
+            logger.info(f"[{self.agent_id}] LLM initialized: {self.llm_model}")
+        except Exception as e:
+            logger.error(f"[{self.agent_id}] Failed to initialize LLM: {e}")
+            raise
+
+        # MongoDB connection
+        uri = os.getenv("MONGO_URI")
+        dbname = os.getenv("MONGO_DB")
+        try:
+            client = MongoClient(uri)
+            db = client[dbname]
+            self.master_coll = db[os.getenv("MONGO_MASTER_COLLECTION", "master_merger_results")]
+            self.rsm_coll = db[os.getenv("MONGO_REDUCER_SUBMASTER_COLLECTION", "reducer_submaster_results")]
+            logger.info(f"[{self.agent_id}] Connected to MongoDB: {dbname}")
+        except Exception as e:
+            logger.error(f"[{self.agent_id}] MongoDB connection failed: {e}")
+            raise
+
+        logger.info(f"[{self.agent_id}] MasterMergerAgent initialized")
+
+    def synthesize_final_document(
+        self,
+        reducer_results: Dict[str, Any],
+        global_context: Dict[str, Any],
+        processing_plan: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Create comprehensive final synthesis from all inputs.
+        
+        Args:
+            reducer_results: Complete aggregated reducer output
+            global_context: Global context from ResidualAgent
+            processing_plan: Strategic plan from ResidualAgent
+            
+        Returns:
+            Complete final synthesis with detailed summary
+        """
+        logger.info(f"[{self.agent_id}] Starting final document synthesis")
+        start_time = time.time()
+        
+        # Load individual RSM outputs for detailed synthesis
+        rsm_outputs = self._load_rsm_outputs(reducer_results.get("rsm_results", []))
+        
+        # Phase 1: Create executive summary
+        executive_summary = self._create_executive_summary(
+            reducer_results, global_context, processing_plan
+        )
+        
+        # Phase 2: Create detailed synthesis by section
+        detailed_synthesis = self._create_detailed_synthesis(
+            rsm_outputs, global_context, processing_plan
+        )
+        
+        # Phase 3: Extract comprehensive metadata
+        metadata = self._extract_comprehensive_metadata(reducer_results, global_context)
+        
+        # Phase 4: Generate insights and conclusions
+        insights_conclusions = self._generate_insights_conclusions(
+            reducer_results, global_context, processing_plan
+        )
+        
+        # Compile final output
+        final_output = {
+            "agent_id": self.agent_id,
+            "timestamp": time.time(),
+            "processing_time": time.time() - start_time,
+            "executive_summary": executive_summary,
+            "detailed_synthesis": detailed_synthesis,
+            "metadata": metadata,
+            "insights_and_conclusions": insights_conclusions,
+            "global_context_used": global_context,
+            "processing_plan_used": processing_plan,
+            "source_statistics": {
+                "num_reducer_submasters": len(rsm_outputs),
+                "total_entities": len(reducer_results.get("entities", {})),
+                "total_keywords": len(reducer_results.get("keywords", {})),
+                "total_key_points": len(reducer_results.get("key_points", [])),
+                "total_insights": len(reducer_results.get("insights", []))
+            }
+        }
+        
+        # Persist to MongoDB
+        self._persist_final_output(final_output)
+        
+        logger.info(f"[{self.agent_id}] Final synthesis complete in {final_output['processing_time']:.2f}s")
+        
+        return final_output
+
+    def _load_rsm_outputs(self, rsm_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Load individual RSM outputs from MongoDB for detailed processing."""
+        outputs = []
+        for rsm in rsm_results:
+            rsm_id = rsm.get("rsm_id")
+            try:
+                doc = self.rsm_coll.find_one({"rsm_id": rsm_id}, {"_id": 0})
+                if doc:
+                    outputs.append(doc)
+                else:
+                    outputs.append(rsm)  # Use what we have
+            except Exception as e:
+                logger.warning(f"Failed to load RSM {rsm_id}: {e}")
+                outputs.append(rsm)
+        return outputs
+
+    def _create_executive_summary(
+        self,
+        reducer_results: Dict[str, Any],
+        global_context: Dict[str, Any],
+        processing_plan: Dict[str, Any]
+    ) -> str:
+        """Generate high-level executive summary."""
+        
+        prompt = f"""
+You are creating an executive summary for a comprehensive document analysis.
+
+**GLOBAL CONTEXT:**
+{json.dumps(global_context, indent=2)}
+
+**OVERALL DOCUMENT SUMMARY:**
+{reducer_results.get('final_summary', '')[:1000]}
+
+**KEY THEMES:**
+{global_context.get('cross_document_themes', [])}
+
+**TOP ENTITIES:**
+{list(dict(sorted(reducer_results.get('entities', {}).items(), key=lambda x: x[1], reverse=True)[:10]).keys())}
+
+**TASK:**
+Create a comprehensive executive summary (300-500 words) that:
+1. Provides high-level overview of the entire document
+2. Highlights main themes and findings
+3. Identifies key entities and their roles
+4. Emphasizes technical significance
+5. Notes important patterns and trends
+
+Write in professional, clear prose. Be specific and informative.
+"""
+        
+        try:
+            summary = self.llm.call_with_retry(prompt, parse_json=False)
+            return summary.strip()
+        except Exception as e:
+            logger.error(f"[{self.agent_id}] Failed to create executive summary: {e}")
+            return reducer_results.get('final_summary', '')[:500]
+
+    def _create_detailed_synthesis(
+        self,
+        rsm_outputs: List[Dict[str, Any]],
+        global_context: Dict[str, Any],
+        processing_plan: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Create detailed section-by-section synthesis."""
+        
+        synthesis = {
+            "sections": [],
+            "cross_section_analysis": "",
+            "technical_deep_dive": ""
+        }
+        
+        # Process each RSM output
+        for rsm in rsm_outputs:
+            section = self._synthesize_section(rsm, global_context, processing_plan)
+            synthesis["sections"].append(section)
+        
+        # Create cross-section analysis
+        synthesis["cross_section_analysis"] = self._create_cross_section_analysis(
+            rsm_outputs, global_context
+        )
+        
+        # Create technical deep dive
+        synthesis["technical_deep_dive"] = self._create_technical_deep_dive(
+            rsm_outputs, global_context
+        )
+        
+        return synthesis
+
+    def _synthesize_section(
+        self,
+        rsm_output: Dict[str, Any],
+        global_context: Dict[str, Any],
+        processing_plan: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Synthesize a single RSM output into detailed section."""
+        
+        rsm_id = rsm_output.get("rsm_id", "Unknown")
+        output = rsm_output.get("output", {})
+        
+        prompt = f"""
+Create a detailed synthesis of this document section.
+
+**SECTION ID:** {rsm_id}
+
+**ENHANCED SUMMARY:**
+{output.get('enhanced_summary', '')}
+
+**KEY POINTS:**
+{output.get('key_points', [])}
+
+**INSIGHTS:**
+{output.get('insights', [])}
+
+**TOP ENTITIES:**
+{list(dict(sorted(output.get('entities', {}).items(), key=lambda x: x[1], reverse=True)[:10]).keys())}
+
+**GLOBAL CONTEXT:**
+Themes: {global_context.get('cross_document_themes', [])}
+Strategy: {processing_plan.get('synthesis_strategy', '')}
+
+**TASK:**
+Create a comprehensive section synthesis (200-400 words) that:
+1. Summarizes main content with technical precision
+2. Highlights relationships to other sections
+3. Emphasizes key findings and evidence
+4. Notes important entities and their significance
+5. Identifies patterns and implications
+
+Be specific, detailed, and technically accurate.
+"""
+        
+        try:
+            section_text = self.llm.call_with_retry(prompt, parse_json=False)
+            
+            return {
+                "section_id": rsm_id,
+                "synthesis": section_text.strip(),
+                "key_entities": list(dict(sorted(
+                    output.get('entities', {}).items(),
+                    key=lambda x: x[1],
+                    reverse=True
+                )[:5]).keys()),
+                "main_themes": output.get('key_points', [])[:5]
+            }
+        except Exception as e:
+            logger.error(f"[{self.agent_id}] Failed to synthesize section {rsm_id}: {e}")
+            return {
+                "section_id": rsm_id,
+                "synthesis": output.get('enhanced_summary', ''),
+                "key_entities": [],
+                "main_themes": []
+            }
+
+    def _create_cross_section_analysis(
+        self,
+        rsm_outputs: List[Dict[str, Any]],
+        global_context: Dict[str, Any]
+    ) -> str:
+        """Analyze patterns and connections across all sections."""
+        
+        all_themes = []
+        all_entities = {}
+        
+        for rsm in rsm_outputs:
+            output = rsm.get("output", {})
+            all_themes.extend(output.get("key_points", []))
+            for entity, count in output.get("entities", {}).items():
+                all_entities[entity] = all_entities.get(entity, 0) + count
+        
+        top_entities = dict(sorted(all_entities.items(), key=lambda x: x[1], reverse=True)[:15])
+        
+        prompt = f"""
+Analyze cross-cutting patterns across multiple document sections.
+
+**GLOBAL THEMES:**
+{global_context.get('cross_document_themes', [])}
+
+**RECURRING ENTITIES:**
+{list(top_entities.keys())}
+
+**COMMON THEMES:**
+{list(set(all_themes))[:20]}
+
+**TASK:**
+Create a cross-section analysis (250-350 words) that:
+1. Identifies patterns appearing across multiple sections
+2. Analyzes relationships between key entities
+3. Notes evolution of themes throughout document
+4. Highlights significant connections and dependencies
+5. Synthesizes overarching narrative
+
+Focus on connections and relationships rather than individual sections.
+"""
+        
+        try:
+            analysis = self.llm.call_with_retry(prompt, parse_json=False)
+            return analysis.strip()
+        except Exception as e:
+            logger.error(f"[{self.agent_id}] Failed cross-section analysis: {e}")
+            return "Cross-section analysis unavailable."
+
+    def _create_technical_deep_dive(
+        self,
+        rsm_outputs: List[Dict[str, Any]],
+        global_context: Dict[str, Any]
+    ) -> str:
+        """Create technical deep dive into key concepts."""
+        
+        all_technical_terms = {}
+        for rsm in rsm_outputs:
+            output = rsm.get("output", {})
+            for term, count in output.get("technical_terms", {}).items():
+                all_technical_terms[term] = all_technical_terms.get(term, 0) + count
+        
+        top_technical = dict(sorted(all_technical_terms.items(), key=lambda x: x[1], reverse=True)[:20])
+        
+        prompt = f"""
+Create a technical deep dive into key concepts from this document.
+
+**TECHNICAL CONCEPTS:**
+{global_context.get('technical_concepts', [])}
+
+**MOST FREQUENT TECHNICAL TERMS:**
+{list(top_technical.keys())}
+
+**TASK:**
+Write a technical analysis (300-450 words) that:
+1. Explains key technical concepts in detail
+2. Describes methodologies and approaches
+3. Analyzes technical relationships and dependencies
+4. Notes technical innovations or novel approaches
+5. Provides context for technical significance
+
+Write for a technical audience with domain expertise.
+"""
+        
+        try:
+            deep_dive = self.llm.call_with_retry(prompt, parse_json=False)
+            return deep_dive.strip()
+        except Exception as e:
+            logger.error(f"[{self.agent_id}] Failed technical deep dive: {e}")
+            return "Technical deep dive unavailable."
+
+    def _extract_comprehensive_metadata(
+        self,
+        reducer_results: Dict[str, Any],
+        global_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Extract and organize comprehensive metadata."""
+        
+        entities = reducer_results.get("entities", {})
+        keywords = reducer_results.get("keywords", {})
+        technical_terms = reducer_results.get("technical_terms", {})
+        
+        return {
+            "top_entities": dict(sorted(entities.items(), key=lambda x: x[1], reverse=True)[:30]),
+            "top_keywords": dict(sorted(keywords.items(), key=lambda x: x[1], reverse=True)[:30]),
+            "top_technical_terms": dict(sorted(technical_terms.items(), key=lambda x: x[1], reverse=True)[:30]),
+            "document_themes": global_context.get("cross_document_themes", []),
+            "technical_concepts": global_context.get("technical_concepts", []),
+            "total_unique_entities": len(entities),
+            "total_unique_keywords": len(keywords),
+            "total_unique_technical_terms": len(technical_terms)
+        }
+
+    def _generate_insights_conclusions(
+        self,
+        reducer_results: Dict[str, Any],
+        global_context: Dict[str, Any],
+        processing_plan: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Generate final insights and conclusions."""
+        
+        all_insights = reducer_results.get("insights", [])
+        key_points = reducer_results.get("key_points", [])
+        
+        prompt = f"""
+Generate final insights and conclusions for this document analysis.
+
+**ALL INSIGHTS:**
+{all_insights[:30]}
+
+**KEY POINTS:**
+{key_points[:30]}
+
+**GLOBAL THEMES:**
+{global_context.get('cross_document_themes', [])}
+
+**PROCESSING STRATEGY:**
+{processing_plan.get('synthesis_strategy', '')}
+
+**TASK:**
+Return a JSON object with:
+{{
+  "key_findings": ["finding1", "finding2", ...],  // 5-10 most important findings
+  "conclusions": "Comprehensive conclusion paragraph (150-250 words)",
+  "implications": ["implication1", "implication2", ...],  // Broader implications
+  "recommendations": ["rec1", "rec2", ...],  // If applicable
+  "future_directions": ["direction1", "direction2", ...]  // Potential future work
+}}
+"""
+        
+        try:
+            result = self.llm.call_with_retry(prompt, parse_json=True)
+            return result
+        except Exception as e:
+            logger.error(f"[{self.agent_id}] Failed to generate insights: {e}")
+            return {
+                "key_findings": key_points[:10],
+                "conclusions": "Analysis complete.",
+                "implications": [],
+                "recommendations": [],
+                "future_directions": []
+            }
+
+    def _persist_final_output(self, final_output: Dict[str, Any]):
+        """Save final output to MongoDB."""
+        try:
+            self.master_coll.insert_one(final_output)
+            logger.info(f"[{self.agent_id}] Final output persisted to MongoDB")
+        except Exception as e:
+            logger.error(f"[{self.agent_id}] Failed to persist final output: {e}")
+
+
+def run_master_merger_standalone():
+    """
+    Standalone runner that loads reducer results and residual context,
+    then creates final synthesis.
+    """
+    logger.info("Starting MasterMerger standalone mode")
+    
+    # Connect to MongoDB
+    uri = os.getenv("MONGO_URI")
+    dbname = os.getenv("MONGO_DB")
+    
+    if not uri or not dbname:
+        raise RuntimeError("MONGO_URI and MONGO_DB must be set")
+    
+    client = MongoClient(uri)
+    db = client[dbname]
+    
+    # Load latest reducer results
+    reducer_coll = db[os.getenv("MONGO_REDUCER_RESULTS_COLLECTION", "reducer_results")]
+    latest_reducer = reducer_coll.find_one(sort=[("timestamp", -1)], projection={"_id": 0})
+    
+    if not latest_reducer:
+        logger.error("No reducer results found")
+        return None
+    
+    # Load latest residual context
+    residual_coll = db[os.getenv("MONGO_RESIDUAL_COLLECTION", "residual_memory")]
+    latest_residual = residual_coll.find_one(sort=[("timestamp", -1)], projection={"_id": 0})
+    
+    if not latest_residual:
+        logger.warning("No residual context found, using empty context")
+        global_context = {}
+        processing_plan = {}
+    else:
+        global_context = latest_residual.get("global_context", {})
+        # Get processing plan (would normally be generated by residual agent)
+        processing_plan = {
+            "synthesis_strategy": "Comprehensive integration of all sections",
+            "key_focus_areas": global_context.get("cross_document_themes", [])
+        }
+    
+    logger.info("Loaded reducer results and residual context")
+    
+    # Initialize Ray
+    if not ray.is_initialized():
+        ray.init(ignore_reinit_error=True)
+    
+    # Create MasterMerger
+    merger = MasterMergerAgent.remote()
+    
+    # Synthesize final document
+    result_future = merger.synthesize_final_document.remote(
+        latest_reducer, global_context, processing_plan
+    )
+    final_result = ray.get(result_future)
+    
+    logger.info("MasterMerger processing complete")
+    
+    return final_result
+
+
+def main():
+    """Main entry point."""
+    try:
+        result = run_master_merger_standalone()
+        
+        if result:
+            print("\n=== MASTER MERGER FINAL OUTPUT ===\n")
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        
+    finally:
+        if ray.is_initialized():
+            ray.shutdown()
+
+
+if __name__ == "__main__":
+    main()
