@@ -15,9 +15,6 @@ AgenticOps is a scalable multi-agent system for large-scale PDF analysis. It use
 </p>
 <p align="center"><b>Distributed Multi-Agent Architecture</b></p>
 
-
-AgenticOps is a scalable multi-agent system for large-scale PDF analysis. It uses a hierarchical mapper–reducer architecture powered by Ray, MongoDB, and LLM-driven agents to deliver fast, reliable, and consistent document understanding.
-
 ## **Features**
 
 * Multi-tier agent architecture with Master, SubMasters, Workers, and Residual Agent
